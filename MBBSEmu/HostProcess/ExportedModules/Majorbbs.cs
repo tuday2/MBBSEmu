@@ -21,6 +21,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace MBBSEmu.HostProcess.ExportedModules
 {
@@ -4817,20 +4818,12 @@ namespace MBBSEmu.HostProcess.ExportedModules
             var stringToStripPointer = GetParameterPointer(0);
             var stringToStrip = Module.Memory.GetString(stringToStripPointer);
 
-            var ansiFound = false;
-            foreach (var t in stringToStrip)
-            {
-                if (t == 0x1B)
-                    ansiFound = true;
-            }
-
-            if (ansiFound)
-                _logger.Warn($"ANSI found but was not stripped. Process not implemented.");
+            var resultsStripped = new Regex(@"\x1b\[[0-9;]*m").Replace(Encoding.ASCII.GetString(stringToStrip.ToArray()), string.Empty);
 
 #if DEBUG
-            _logger.Info("Ignoring, not stripping ANSI");
+            _logger.Info("Stripping ANSI");
 #endif
-
+            Module.Memory.SetArray(stringToStripPointer, Encoding.ASCII.GetBytes(resultsStripped));
             Registers.SetPointer(stringToStripPointer);
 
         }
@@ -5015,6 +5008,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
                 variablePointer = base.Module.Memory.AllocateVariable($"RAWMSG", 0x1000);
 
             var outputValue = McvPointerDictionary[_currentMcvFile.Offset].GetString(msgnum);
+            outputValue = Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(outputValue).Replace("\n", string.Empty));
 
             if (outputValue.Length > 0x1000)
                 throw new Exception($"MSG {msgnum} is larger than pre-defined buffer: {outputValue.Length}");

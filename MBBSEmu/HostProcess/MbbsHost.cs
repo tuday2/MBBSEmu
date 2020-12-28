@@ -831,7 +831,7 @@ namespace MBBSEmu.HostProcess
             module.ExportedModuleDictionary.Add(Doscalls.Segment, GetFunctions(module, "DOSCALLS"));
 
             //Add it to the Module Dictionary
-            module.StateCode = (short)_modules.Count;
+            module.StateCode = (short)(_modules.Count + 1);
             _modules[module.ModuleIdentifier] = module;
 
             //Run INIT

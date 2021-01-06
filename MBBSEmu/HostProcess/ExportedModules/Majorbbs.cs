@@ -4844,7 +4844,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             var resultsStripped = new Regex(@"\x1b\[[0-9;]*m").Replace(Encoding.ASCII.GetString(stringToStrip.ToArray()), string.Empty);
 
 #if DEBUG
-            _logger.Debug("Ignoring, not stripping ANSI");
+            _logger.Debug("Stripping ANSI");
 #endif
             Module.Memory.SetArray(stringToStripPointer, Encoding.ASCII.GetBytes(resultsStripped));
             Registers.SetPointer(stringToStripPointer);

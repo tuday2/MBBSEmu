@@ -3,9 +3,12 @@ using MBBSEmu.Database.Repositories.Account;
 using MBBSEmu.Database.Repositories.AccountKey;
 using MBBSEmu.Date;
 using MBBSEmu.DependencyInjection;
+using MBBSEmu.Disassembler;
+using MBBSEmu.DOS;
 using MBBSEmu.HostProcess;
 using MBBSEmu.HostProcess.Structs;
 using MBBSEmu.IO;
+using MBBSEmu.Logging;
 using MBBSEmu.Memory;
 using MBBSEmu.Module;
 using MBBSEmu.Resources;
@@ -15,13 +18,13 @@ using MBBSEmu.Session.Enums;
 using MBBSEmu.Session.LocalConsole;
 using Microsoft.Extensions.Configuration;
 using NLog;
+using NLog.Layouts;
+using NLog.Targets;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using MBBSEmu.Disassembler;
-using MBBSEmu.DOS;
 
 namespace MBBSEmu
 {
@@ -200,9 +203,15 @@ namespace MBBSEmu
                                 break;
                             }
                         case "-CONSOLE":
+                        {
+                            //Check to see if running Windows and earlier then Windows 8.0
+                            if (OperatingSystem.IsWindows() && !OperatingSystem.IsWindowsVersionAtLeast(6, 2))
                             {
-                                _isConsoleSession = true;
-                                break;
+                                throw new ArgumentException("Console not supported on versions of Windows earlier than 8.0");
+                            }
+                            
+                            _isConsoleSession = true;
+                            break;
                             }
                         default:
                             Console.WriteLine($"Unknown Command Line Argument: {args[i]}");
@@ -227,6 +236,22 @@ namespace MBBSEmu
                 var resourceManager = _serviceResolver.GetService<IResourceManager>();
                 var globalCache = _serviceResolver.GetService<IGlobalCache>();
                 var fileHandler = _serviceResolver.GetService<IFileUtility>();
+
+                //Setup Logger from AppSettings
+                LogManager.Configuration.LoggingRules.Clear();
+                CustomLogger.AddLogLevel("consoleLogger", configuration.ConsoleLogLevel);
+                if (!string.IsNullOrEmpty(configuration.FileLogName))
+                {
+                    var fileLogger = new FileTarget("fileLogger")
+                    {
+                        FileNameKind = 0,
+                        FileName = "${var:mbbsdir}" + configuration.FileLogName,
+                        Layout = Layout.FromString("${shortdate} ${time} ${level} ${callsite} ${message}"),
+                    };
+                    LogManager.Configuration.AddTarget(fileLogger);
+                    CustomLogger.AddLogLevel("fileLogger", configuration.FileLogLevel);
+                }
+                LogManager.ReconfigExistingLoggers();
 
                 //Setup Generic Database
                 if (!File.Exists($"BBSGEN.DB"))
@@ -271,7 +296,7 @@ namespace MBBSEmu
 
                     //Load Config File
                     var moduleConfiguration = new ConfigurationBuilder().SetBasePath(Directory.GetCurrentDirectory())
-                        .AddJsonFile(_moduleConfigFileName, optional: false, reloadOnChange: true).Build();
+                        .AddJsonFile(_moduleConfigFileName, false, true).Build();
 
                     foreach (var m in moduleConfiguration.GetSection("Modules").GetChildren())
                     {
@@ -282,10 +307,10 @@ namespace MBBSEmu
                             continue;
                         }
 
-                        //Check for Non Character MenuOptionKey
-                        if (!string.IsNullOrEmpty(m["MenuOptionKey"]) && (!char.IsLetter(m["MenuOptionKey"][0])))
+                        //Check for Non Character/Digit MenuOptionKey
+                        if (!string.IsNullOrEmpty(m["MenuOptionKey"]) && (!char.IsLetterOrDigit(m["MenuOptionKey"][0])))
                         {
-                            _logger.Error($"Invalid menu option key (NOT A-Z) for {m["Identifier"]}, module not loaded");
+                            _logger.Error($"Invalid menu option key (NOT A-Z or 0-9) for {m["Identifier"]}, module not loaded");
                             continue;
                         }
 

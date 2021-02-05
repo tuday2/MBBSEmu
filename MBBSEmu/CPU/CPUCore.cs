@@ -114,7 +114,20 @@ namespace MBBSEmu.CPU
         ///
         ///     AggressiveOptimization will tell the JIT to spend more time during compilation generating better code
         /// </summary>
-        private const MethodImplOptions CompilerOptimizations = MethodImplOptions.AggressiveOptimization;
+        private const MethodImplOptions OpcodeCompilerOptimizations = MethodImplOptions.AggressiveOptimization;
+
+
+        /// <summary>
+        ///     Default Compiler Hints for use on methods within the CPU
+        ///
+        ///     AggressiveOptimization == The method contains a hot path and should be optimized
+        ///
+        ///     Inlining actually is appropriate for the Opcode Subroutines (8, 16, 32 bit variations) as it inlines
+        ///     those with their Opcode function. 
+        ///
+        ///     AggressiveOptimization will tell the JIT to spend more time during compilation generating better code
+        /// </summary>
+        private const MethodImplOptions OpcodeSubroutineCompilerOptimizations = MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining;
 
         private readonly Dictionary<int, IInterruptHandler> _interruptHandlers;
 
@@ -236,7 +249,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Ticks the emulated x86 Core one instruction from the current CS:IP
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         public void Tick()
         {
             // TODO figure out how we can remove this check, such as filling the
@@ -584,6 +597,12 @@ namespace MBBSEmu.CPU
                 case Mnemonic.Movsw:
                     Op_Movsw();
                     break;
+                case Mnemonic.Movsx:
+                    Op_Movsx();
+                    break;
+                case Mnemonic.Movzx:
+                    Op_Movzx();
+                    break;
                 case Mnemonic.Shld:
                     Op_Shld();
                     break;
@@ -616,7 +635,7 @@ namespace MBBSEmu.CPU
         /// <param name="opKind"></param>
         /// <param name="operandType"></param>
         /// <returns></returns>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private byte GetOperandValueUInt8(OpKind opKind, EnumOperandType operandType)
         {
             switch (opKind)
@@ -664,7 +683,7 @@ namespace MBBSEmu.CPU
         /// <param name="opKind"></param>
         /// <param name="operandType"></param>
         /// <returns></returns>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private ushort GetOperandValueUInt16(OpKind opKind, EnumOperandType operandType)
         {
             switch (opKind)
@@ -714,7 +733,7 @@ namespace MBBSEmu.CPU
         /// </summary>
         /// <param name="opKind"></param>
         /// <returns></returns>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private uint GetOperandValueUInt32(OpKind opKind, EnumOperandType operandType)
         {
             switch (opKind)
@@ -771,7 +790,7 @@ namespace MBBSEmu.CPU
         /// </summary>
         /// <param name="opKind"></param>
         /// <returns></returns>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private ulong GetOperandValueUInt64(OpKind opKind)
         {
             switch (opKind)
@@ -824,7 +843,7 @@ namespace MBBSEmu.CPU
         /// <param name="opKind"></param>
         /// <param name="operandType"></param>
         /// <returns></returns>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private float GetOperandValueFloat(OpKind opKind, EnumOperandType operandType)
         {
             return opKind switch
@@ -848,7 +867,7 @@ namespace MBBSEmu.CPU
         /// <param name="opKind"></param>
         /// <param name="operandType"></param>
         /// <returns></returns>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private double GetOperandValueDouble(OpKind opKind, EnumOperandType operandType)
         {
             return opKind switch
@@ -877,7 +896,7 @@ namespace MBBSEmu.CPU
         /// </summary>
         /// <param name="opKind"></param>
         /// <returns></returns>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private ushort GetOperandOffset(OpKind opKind)
         {
             ushort result;
@@ -944,10 +963,10 @@ namespace MBBSEmu.CPU
         }
 
         /// <summary>
-        ///     Returns if the Current Instruction is an 8-bit or 16-bit operation
+        ///     Returns if the Current Instruction is an 8-bit, 16-bit, or 32-bit operation
         /// </summary>
         /// <returns></returns>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private int GetCurrentOperationSize()
         {
             return _currentInstruction.Op0Kind switch
@@ -964,7 +983,7 @@ namespace MBBSEmu.CPU
         ///     Saves the specified result of the current instruction into the current instructions destination
         /// </summary>
         /// <param name="result"></param>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void WriteToDestination(uint result)
         {
             switch (_currentInstruction.Op0Kind)
@@ -1011,7 +1030,7 @@ namespace MBBSEmu.CPU
         ///     Writes the specified result of the instruction into the specified destination
         /// </summary>
         /// <param name="result"></param>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void WriteToDestination(float result)
         {
             switch (_currentInstruction.Op0Kind)
@@ -1030,7 +1049,7 @@ namespace MBBSEmu.CPU
         ///     Writes the specified result of the instruction into the specified destination
         /// </summary>
         /// <param name="result"></param>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void WriteToDestination(double result)
         {
             switch (_currentInstruction.Op0Kind)
@@ -1055,7 +1074,7 @@ namespace MBBSEmu.CPU
         ///     This is only used by a couple specific opcodes
         /// </summary>
         /// <param name="result"></param>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void WriteToSource(ushort result)
         {
             switch (_currentInstruction.Op1Kind)
@@ -1083,7 +1102,7 @@ namespace MBBSEmu.CPU
         }
 
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Loop()
         {
             Registers.CX--;
@@ -1098,20 +1117,20 @@ namespace MBBSEmu.CPU
             Registers.IP = GetOperandOffset(_currentInstruction.Op0Kind);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Int()
         {
             _interruptHandlers[_currentInstruction.Immediate8].Handle();
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Cwd()
         {
-            Registers.DX = Registers.AX.IsBitSet(15) ? (ushort)0xFFFF : (ushort)0x0000;
+            Registers.DX = Registers.AX.IsBitSet(15) ? 0xFFFF : 0x0000;
         }
 
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Neg()
         {
             var result = _currentOperationSize switch
@@ -1124,7 +1143,7 @@ namespace MBBSEmu.CPU
             WriteToDestination(result);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private byte Op_Neg_8()
         {
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1138,7 +1157,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Neg_16()
         {
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1152,7 +1171,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Sbb()
         {
             var result = _currentOperationSize switch
@@ -1165,7 +1184,7 @@ namespace MBBSEmu.CPU
             WriteToDestination(result);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private byte Op_Sbb_8()
         {
             var source = GetOperandValueUInt8(_currentInstruction.Op1Kind, EnumOperandType.Source);
@@ -1183,7 +1202,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Sbb_16()
         {
             var source = GetOperandValueUInt16(_currentInstruction.Op1Kind, EnumOperandType.Source);
@@ -1202,7 +1221,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Clc() => Registers.F = Registers.F.ClearFlag((ushort)EnumFlags.CF);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1222,7 +1241,7 @@ namespace MBBSEmu.CPU
             WriteToDestination(result);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private byte Op_Or_8()
         {
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1232,7 +1251,7 @@ namespace MBBSEmu.CPU
             return destination;
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Or_16()
         {
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1242,7 +1261,7 @@ namespace MBBSEmu.CPU
             return destination;
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private uint Op_Or_32()
         {
             var destination = GetOperandValueUInt32(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1252,7 +1271,7 @@ namespace MBBSEmu.CPU
             return destination;
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Rcr()
         {
             var result = _currentOperationSize switch
@@ -1265,7 +1284,7 @@ namespace MBBSEmu.CPU
             WriteToDestination(result);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private byte Op_Rcr_8()
         {
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1300,7 +1319,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Rcr_16()
         {
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1335,7 +1354,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Rcl()
         {
             var result = _currentOperationSize switch
@@ -1348,7 +1367,7 @@ namespace MBBSEmu.CPU
             WriteToDestination(result);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private byte Op_Rcl_8()
         {
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1384,7 +1403,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Rcl_16()
         {
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1420,7 +1439,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Sar()
         {
             var result = _currentOperationSize switch
@@ -1433,7 +1452,7 @@ namespace MBBSEmu.CPU
             WriteToDestination(result);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Sar_8()
         {
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1454,7 +1473,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Sar_16()
         {
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1475,7 +1494,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Shr()
         {
             var result = _currentOperationSize switch
@@ -1488,7 +1507,7 @@ namespace MBBSEmu.CPU
             WriteToDestination(result);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private byte Op_Shr_8()
         {
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1504,7 +1523,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Shr_16()
         {
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1520,7 +1539,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Shl()
         {
             var result = _currentOperationSize switch
@@ -1534,7 +1553,7 @@ namespace MBBSEmu.CPU
             WriteToDestination(result);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private byte Op_Shl_8()
         {
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1550,7 +1569,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Shl_16()
         {
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1566,7 +1585,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private uint Op_Shl_32()
         {
             var destination = GetOperandValueUInt32(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1582,7 +1601,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Les()
         {
             var offset = GetOperandOffset(_currentInstruction.Op1Kind);
@@ -1594,7 +1613,7 @@ namespace MBBSEmu.CPU
             Registers.ES = dataPointer.Segment;
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Lds()
         {
             var offset = GetOperandOffset(_currentInstruction.Op1Kind);
@@ -1607,7 +1626,7 @@ namespace MBBSEmu.CPU
         }
 
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Lea()
         {
             var sourceOffset = GetOperandOffset(_currentInstruction.Op1Kind);
@@ -1622,7 +1641,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Enter()
         {
             switch (_currentInstruction.Op0Kind)
@@ -1637,21 +1656,21 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Leave()
         {
             Registers.SP = Registers.BP;
             Registers.BP = Pop();
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Retf()
         {
             Registers.IP = Pop();
             Registers.CS = Pop();
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Ret()
         {
             Registers.IP = Pop();
@@ -1661,7 +1680,7 @@ namespace MBBSEmu.CPU
                 Registers.SP += GetOperandValueUInt16(OpKind.Immediate16, EnumOperandType.Destination);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Stosw()
         {
         stosw:
@@ -1684,7 +1703,7 @@ namespace MBBSEmu.CPU
 
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Inc()
         {
             var result = _currentOperationSize switch
@@ -1698,7 +1717,7 @@ namespace MBBSEmu.CPU
             WriteToDestination(result);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private byte Op_Inc_8()
         {
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1713,7 +1732,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Inc_16()
         {
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1728,7 +1747,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private uint Op_Inc_32()
         {
             var destination = GetOperandValueUInt32(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1743,7 +1762,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Dec()
         {
             var result = _currentOperationSize switch
@@ -1756,7 +1775,7 @@ namespace MBBSEmu.CPU
             WriteToDestination(result);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private byte Op_Dec_8()
         {
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1771,7 +1790,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Dec_16()
         {
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1786,7 +1805,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_And()
         {
             var result = _currentOperationSize switch
@@ -1803,7 +1822,7 @@ namespace MBBSEmu.CPU
             Registers.F = Registers.F.ClearFlag((ushort)EnumFlags.CF | (ushort)EnumFlags.OF);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private byte Op_And_8()
         {
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1814,7 +1833,7 @@ namespace MBBSEmu.CPU
             return destination;
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_And_16()
         {
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1825,6 +1844,7 @@ namespace MBBSEmu.CPU
             return destination;
         }
 
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private uint Op_And_32()
         {
             var destination = GetOperandValueUInt32(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1835,7 +1855,7 @@ namespace MBBSEmu.CPU
             return destination;
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Xor()
         {
             var result = _currentOperationSize switch
@@ -1852,7 +1872,7 @@ namespace MBBSEmu.CPU
             Registers.F = Registers.F.ClearFlag((ushort)EnumFlags.CF | (ushort)EnumFlags.OF);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private byte Op_Xor_8()
         {
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1863,7 +1883,7 @@ namespace MBBSEmu.CPU
             return result;
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Xor_16()
         {
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1874,7 +1894,7 @@ namespace MBBSEmu.CPU
             return result;
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private uint Op_Xor_32()
         {
             var destination = GetOperandValueUInt32(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -1885,7 +1905,7 @@ namespace MBBSEmu.CPU
             return result;
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Ja()
         {
             if (!Registers.F.IsFlagSet((ushort)EnumFlags.CF) && !Registers.F.IsFlagSet((ushort)EnumFlags.ZF))
@@ -1898,7 +1918,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Jae()
         {
             if (!Registers.F.IsFlagSet((ushort)EnumFlags.CF))
@@ -1911,7 +1931,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Jbe()
         {
             if (Registers.F.IsFlagSet((ushort)EnumFlags.ZF) || Registers.F.IsFlagSet((ushort)EnumFlags.CF))
@@ -1924,7 +1944,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Jmp()
         {
             if (_currentInstruction.FlowControl == FlowControl.IndirectBranch)
@@ -1963,7 +1983,7 @@ namespace MBBSEmu.CPU
 
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Jle()
         {
             //ZF == 1 OR SF <> OF
@@ -1978,7 +1998,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Jge()
         {
             // SF == OF
@@ -1992,7 +2012,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Jne()
         {
             //ZF == 0
@@ -2006,7 +2026,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Jg()
         {
             //ZF == 0 & SF == OF
@@ -2021,7 +2041,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Je()
         {
             // ZF == 1
@@ -2035,7 +2055,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Jl()
         {
             //SF <> OF
@@ -2049,7 +2069,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Jb()
         {
             //CF == 1
@@ -2063,7 +2083,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Test()
         {
             switch (_currentOperationSize)
@@ -2085,7 +2105,7 @@ namespace MBBSEmu.CPU
             Registers.F = Registers.F.ClearFlag((ushort)EnumFlags.CF | (ushort)EnumFlags.OF);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private void Op_Test_8()
         {
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -2095,7 +2115,7 @@ namespace MBBSEmu.CPU
             Flags_EvaluateSignZero(destination);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private void Op_Test_16()
         {
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -2105,7 +2125,7 @@ namespace MBBSEmu.CPU
             Flags_EvaluateSignZero(destination);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private void Op_Test_32()
         {
             var destination = GetOperandValueUInt32(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -2118,7 +2138,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Identical to SUB, just doesn't save result of subtraction
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Cmp()
         {
             switch (_currentOperationSize)
@@ -2137,7 +2157,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Sub()
         {
             var result = _currentOperationSize switch
@@ -2151,7 +2171,7 @@ namespace MBBSEmu.CPU
             WriteToDestination(result);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private byte Op_Sub_8()
         {
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -2167,7 +2187,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Sub_16()
         {
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -2183,7 +2203,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private uint Op_Sub_32()
         {
             var destination = GetOperandValueUInt32(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -2203,7 +2223,7 @@ namespace MBBSEmu.CPU
         ///     ADD and ADC are exactly the same, except that ADC also adds 1 if the carry flag is set
         ///     So we don't repeat the function, we just pass the ADC flag
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Add(bool addCarry = false)
         {
             var result = _currentOperationSize switch
@@ -2217,7 +2237,7 @@ namespace MBBSEmu.CPU
             WriteToDestination(result);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private byte Op_Add_8(bool addCarry)
         {
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -2236,7 +2256,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Add_16(bool addCarry)
         {
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -2255,7 +2275,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Add_32(bool addCarry)
         {
             var destination = GetOperandValueUInt32(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -2274,7 +2294,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Imul()
         {
             switch (_currentInstruction.OpCount)
@@ -2290,7 +2310,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private void Op_Imul_1operand()
         {
             var operand2 = Registers.AX;
@@ -2309,7 +2329,7 @@ namespace MBBSEmu.CPU
             Registers.AX = result;
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private void Op_Imul_3operand()
         {
             var operand2 = _currentOperationSize switch
@@ -2336,21 +2356,7 @@ namespace MBBSEmu.CPU
             WriteToDestination(result);
         }
 
-        [MethodImpl(CompilerOptimizations)]
-        private void Op_Idiv()
-        {
-            switch (_currentOperationSize)
-            {
-                case 1:
-                    Op_Idiv_8();
-                    return;
-                case 2:
-                    Op_Idiv_16();
-                    return;
-            }
-        }
-
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Mul()
         {
             switch (_currentOperationSize)
@@ -2364,9 +2370,12 @@ namespace MBBSEmu.CPU
                 case 4:
                     Op_Mul_32();
                     return;
+                default:
+                    throw new Exception("Unsupported Operation Size");
             }
         }
 
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private void Op_Mul_8()
         {
             var operand2 = Registers.AL;
@@ -2385,6 +2394,7 @@ namespace MBBSEmu.CPU
             }
         }
 
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private void Op_Mul_16()
         {
             var operand2 = Registers.AX;
@@ -2404,6 +2414,7 @@ namespace MBBSEmu.CPU
             }
         }
 
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private void Op_Mul_32()
         {
             var operand2 = Registers.EAX;
@@ -2423,38 +2434,66 @@ namespace MBBSEmu.CPU
             }
         }
 
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Idiv()
+        {
+            switch (_currentOperationSize)
+            {
+                case 1:
+                    Op_Idiv_8();
+                    return;
+                case 2:
+                    Op_Idiv_16();
+                    return;
+                case 4:
+                    Op_Idiv_32();
+                    return;
+                default:
+                    throw new Exception("Unsupported Operation Size");
+            }
+        }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private void Op_Idiv_8()
         {
-            var destination = (sbyte)GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
+            var divisor = (sbyte)GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
 
-            var quotient = Math.DivRem((short)Registers.AX, destination, out var remainder);
-
+            var quotient = Math.DivRem((short)Registers.AX, divisor, out var remainder);
             if (quotient > sbyte.MaxValue || quotient < sbyte.MinValue)
                 throw new OverflowException("Divide Error: Quotient Overflow");
 
             Registers.AL = (byte)quotient;
             Registers.AH = (byte)remainder;
-
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private void Op_Idiv_16()
         {
-            var destination = (short)GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
+            var divisor = (short)GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
 
-            var quotient = Math.DivRem(Registers.GetLong(), destination, out var remainder);
-
+            var quotient = Math.DivRem(Registers.GetLong(), divisor, out var remainder);
             if (quotient > short.MaxValue || quotient < short.MinValue)
                 throw new OverflowException("Divide Error: Quotient Overflow");
 
             Registers.AX = (ushort)quotient;
             Registers.DX = (ushort)remainder;
-
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
+        private void Op_Idiv_32()
+        {
+            var divisor = (int)GetOperandValueUInt32(_currentInstruction.Op0Kind, EnumOperandType.Destination);
+            var dividend = (long)((ulong)Registers.EDX << 32 | Registers.EAX);
+
+            var quotient = Math.DivRem(dividend, divisor, out var remainder);
+            if (quotient > int.MaxValue || quotient < int.MinValue)
+                throw new OverflowException("Divide Error: Quotient Overflow");
+
+            Registers.EAX = (uint)quotient;
+            Registers.EDX = (uint)remainder;
+        }
+
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Pop()
         {
             switch (_currentInstruction.Op0Kind)
@@ -2473,7 +2512,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Push Op Code
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Push()
         {
             switch (_currentInstruction.StackPointerIncrement)
@@ -2483,7 +2522,7 @@ namespace MBBSEmu.CPU
                     Push(GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination));
                     return;
 
-                //166bit, also default size (-1)
+                //16bit, also default size (-1)
                 case -2 when _currentOperationSize == -1:
                 case -2 when _currentOperationSize == 2:
                     Push(GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination));
@@ -2506,7 +2545,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     MOV Op Code
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Mov()
         {
             switch (_currentInstruction.Op0Kind)
@@ -2556,7 +2595,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Call()
         {
             _previousCallPointer.Segment = Registers.CS;
@@ -2602,7 +2641,7 @@ namespace MBBSEmu.CPU
                         _invokeExternalFunctionDelegate(_currentInstruction.FarBranchSelector,
                             _currentInstruction.Immediate16);
 
-                        //Control Transfer Occured in the CALL, so we clean up the stack and return
+                        //Control Transfer occurred in the CALL, so we clean up the stack and return
                         if (ipBeforeCall != Registers.IP)
                             return;
 
@@ -2649,7 +2688,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Load Operation (x87)
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fld()
         {
             var floatToLoad = GetOperandValueDouble(_currentInstruction.Op0Kind, EnumOperandType.Source);
@@ -2662,7 +2701,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Integer Load Operation (x87)
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fild()
         {
             var valueToLoad = GetOperandValueUInt64(_currentInstruction.Op0Kind);
@@ -2675,7 +2714,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Multiplication (x87)
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fmul()
         {
             var ST0 = FpuStack[Registers.Fpu.GetStackTop()];
@@ -2688,7 +2727,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Store & Pop (x87)
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fstp()
         {
             Op_Fst();
@@ -2699,7 +2738,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Store Status Word to Memory or AX Register
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fstsw()
         {
             switch (_currentInstruction.Op0Kind)
@@ -2717,7 +2756,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Set Status Flag Values from Flags Saved in AH
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Sahf()
         {
             if (Registers.AH.IsFlagSet((byte)EnumFlags.SF))
@@ -2766,7 +2805,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Not()
         {
             var destination = _currentOperationSize switch
@@ -2781,7 +2820,7 @@ namespace MBBSEmu.CPU
             WriteToDestination(result);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Xchg()
         {
             var destination = _currentOperationSize switch
@@ -2802,7 +2841,7 @@ namespace MBBSEmu.CPU
             WriteToSource(destination);
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Div()
         {
             switch (_currentOperationSize)
@@ -2813,43 +2852,66 @@ namespace MBBSEmu.CPU
                 case 2:
                     Op_Div_16();
                     return;
+                case 4:
+                    Op_Div_32();
+                    return;
+                default:
+                    throw new Exception("Unsupported Operation Size");
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private void Op_Div_8()
         {
             var divisor = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
             var dividend = Registers.AX;
 
-            var quotient = Math.DivRem(dividend, divisor, out var remainder);
-
+            var quotient = dividend / divisor;
             if (quotient > byte.MaxValue)
                 throw new OverflowException("Divide Error: Quotient Overflow");
+
+            var remainder = dividend % divisor;
 
             Registers.AL = (byte)quotient;
             Registers.AH = (byte)remainder;
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private void Op_Div_16()
         {
             var divisor = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
             var dividend = (uint)Registers.GetLong();
 
-            var quotient = Math.DivRem(dividend, divisor, out var remainder);
-
+            var quotient = dividend / divisor;
             if (quotient > ushort.MaxValue)
                 throw new OverflowException("Divide Error: Quotient Overflow");
+
+            var remainder = dividend % divisor;
 
             Registers.AX = (ushort)quotient;
             Registers.DX = (ushort)remainder;
         }
 
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
+        private void Op_Div_32()
+        {
+            var divisor = GetOperandValueUInt32(_currentInstruction.Op0Kind, EnumOperandType.Destination);
+            var dividend = (ulong)Registers.EDX << 32 | Registers.EAX;
+
+            var quotient = dividend / divisor;
+            if (quotient > uint.MaxValue)
+                throw new OverflowException("Divide Error: Quotient Overflow");
+
+            var remainder = dividend % divisor;
+
+            Registers.EAX = (uint)quotient;
+            Registers.EDX = (uint)remainder;
+        }
+
         /// <summary>
         ///     Floating Point Subtraction (x87)
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fsub()
         {
             var floatToSubtract = GetOperandValueDouble(_currentInstruction.Op0Kind, EnumOperandType.Source);
@@ -2862,7 +2924,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Reverse Subtraction (x87)
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fsubr()
         {
             var valueToSubtractFrom = GetOperandValueDouble(_currentInstruction.Op0Kind, EnumOperandType.Source);
@@ -2875,7 +2937,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Reverse Subtraction (x87)
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fsubrp()
         {
             var valueToSubtractFrom = GetOperandValueDouble(_currentInstruction.Op0Kind, EnumOperandType.Source);
@@ -2889,7 +2951,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Load Zero
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fldz()
         {
             Registers.Fpu.PushStackTop();
@@ -2899,7 +2961,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Load Control Word
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fldcw()
         {
             var offset = GetOperandOffset(_currentInstruction.Op0Kind);
@@ -2911,7 +2973,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Store Control Word
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fstcw()
         {
             switch (_currentInstruction.Op0Kind)
@@ -2929,7 +2991,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Store Integer & Pop
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fistp()
         {
             var offset = GetOperandOffset(_currentInstruction.Op0Kind);
@@ -2988,7 +3050,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Add ST0 to ST1
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Faddp()
         {
             var STdestination = GetOperandValueDouble(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -3006,7 +3068,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Clear Interrupt Flag
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Cli()
         {
             Registers.F = Registers.F.ClearFlag((ushort)EnumFlags.IF);
@@ -3015,7 +3077,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Set Interrupt Flag
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Sti()
         {
             Registers.F = Registers.F.SetFlag((ushort)EnumFlags.IF);
@@ -3024,7 +3086,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Store (x87)
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fst()
         {
             var valueToSave = FpuStack[Registers.Fpu.GetStackTop()]; //Save off ST(0)
@@ -3055,7 +3117,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Covert Byte to Word
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Cbw()
         {
             Registers.AH = Registers.AL.IsNegative() ? (byte)0xFF : (byte)0x0;
@@ -3064,7 +3126,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Clears Direction Flag
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Cld()
         {
             Registers.F = Registers.F.ClearFlag((ushort)EnumFlags.DF);
@@ -3073,7 +3135,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Load byte at address DS:(E)SI into AL.
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Lodsb()
         {
             Registers.AL = Memory.GetByte(Registers.DS, Registers.SI);
@@ -3091,7 +3153,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Store AL at address ES:(E)DI.
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Stosb()
         {
         stosb:
@@ -3113,7 +3175,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Jcxz()
         {
             // CX == 0
@@ -3127,7 +3189,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Scasb()
         {
         scasb:
@@ -3164,7 +3226,7 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Loope()
         {
             Registers.CX--;
@@ -3184,7 +3246,7 @@ namespace MBBSEmu.CPU
         ///
         ///     Pushes the value of "1" to ST(0)
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fld1()
         {
             Registers.Fpu.PushStackTop();
@@ -3196,7 +3258,7 @@ namespace MBBSEmu.CPU
         ///
         ///     Computes square root of ST(0) and stores the result in ST(0).
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fsqrt()
         {
             //Handle FPU States for ST0 values that won't square root
@@ -3219,7 +3281,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Division (x87)
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fdiv()
         {
             var source = GetOperandValueDouble(_currentInstruction.Op0Kind, EnumOperandType.Source);
@@ -3232,7 +3294,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Multiply ST0 to ST1
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fmulp()
         {
             var ST0 = FpuStack[Registers.Fpu.GetStackTop()];
@@ -3252,7 +3314,7 @@ namespace MBBSEmu.CPU
         ///     according to the results. The source operand can be a data register or a memory location. If no source operand is given,
         ///     the value in ST(0) is compared with the value in ST(1). The sign of zero is ignored, so that –0.0 is equal to +0.0.
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fcom()
         {
             var source = GetOperandValueDouble(_currentInstruction.Op0Kind, EnumOperandType.Source);
@@ -3283,7 +3345,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Same as FCOM, but Pops the FPU Stack
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fcomp()
         {
             Op_Fcom();
@@ -3297,7 +3359,7 @@ namespace MBBSEmu.CPU
         ///     Because FCOMPP doesn't have any source or destination operands, we have to manually retrieve
         ///     ST0 and ST1 values for comparison (can't just call FCOM).
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fcompp()
         {
 
@@ -3333,7 +3395,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Push Flags Register to Stack
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Pushf()
         {
             Push(Registers.F);
@@ -3344,7 +3406,7 @@ namespace MBBSEmu.CPU
         ///
         ///     Add m32fp to ST(0) and store result in ST(0).
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fadd()
         {
             var floatToAdd = GetOperandValueDouble(_currentInstruction.Op0Kind, EnumOperandType.Source);
@@ -3357,7 +3419,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Divide ST1 by ST0 saving the result to ST(1) and Popping the FPU stack
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fdivp()
         {
             var STdestination = GetOperandValueDouble(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -3377,7 +3439,7 @@ namespace MBBSEmu.CPU
         ///
         ///     FCLEX is similar to FNCLEX, except it is preceded by a WAIT which is ignored
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fclex()
         {
             Registers.Fpu.ClearExceptions();
@@ -3386,7 +3448,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Rounds the value at ST(0) to the nearest Integral Value and stores it in ST(0)
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Frndint()
         {
             FpuStack[Registers.Fpu.GetStackTop()] = Math.Round(FpuStack[Registers.Fpu.GetStackTop()], MidpointRounding.AwayFromZero);
@@ -3395,7 +3457,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Rotate Right
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Ror()
         {
             var result = _currentOperationSize switch
@@ -3412,7 +3474,7 @@ namespace MBBSEmu.CPU
         ///     8-bit Rotate Right
         /// </summary>
         /// <returns></returns>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private byte Op_Ror_8()
         {
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -3442,7 +3504,7 @@ namespace MBBSEmu.CPU
         ///     16-bit Rotate Right
         /// </summary>
         /// <returns></returns>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private ushort Op_Ror_16()
         {
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -3471,7 +3533,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Compare ST(0) to 0.0 (x87)
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Ftst()
         {
             var ST0Value = FpuStack[Registers.Fpu.GetStackTop()];
@@ -3504,7 +3566,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Reverse Division (x87)
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fdivr()
         {
             var dividend = GetOperandValueDouble(_currentInstruction.Op0Kind, EnumOperandType.Source);
@@ -3517,7 +3579,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Point Reverse Division (x87)
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fdivrp()
         {
             var dividend = GetOperandValueDouble(_currentInstruction.Op0Kind, EnumOperandType.Source);
@@ -3571,7 +3633,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Load String Operand
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Lodsw()
         {
             Registers.AX = Memory.GetWord(Registers.DS, Registers.SI);
@@ -3586,7 +3648,10 @@ namespace MBBSEmu.CPU
             }
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        /// <summary>
+        ///     Move data from String to String
+        /// </summary>
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Movsw()
         {
         movsw:
@@ -3612,15 +3677,123 @@ namespace MBBSEmu.CPU
         }
 
         /// <summary>
+        ///     Move with Sign-Extend
+        /// </summary>
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Movsx()
+        {
+
+            var result = _currentOperationSize switch
+            {
+                2 => Op_Movsx_16(),
+                4 => Op_Movsx_32(),
+                _ => throw new Exception("Unsupported Operation Size")
+            };
+            
+            WriteToDestination(result);
+        }
+
+        /// <summary>
+        ///     Move with Sign-Extend to 16bit destination
+        /// </summary>
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
+        private ushort Op_Movsx_16()
+        {
+            var result = GetOperandValueUInt8(_currentInstruction.Op1Kind, EnumOperandType.Source).ToUshortSignExtended();
+            return result;
+        }
+
+        /// <summary>
+        ///     Move with Sign-Extend to 32bit destination
+        /// </summary>
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
+        private uint Op_Movsx_32()
+        {
+            var sourceSize = _currentInstruction.Op1Kind switch
+            {
+                OpKind.Register => GetSize(_currentInstruction.Op1Register),
+                OpKind.Memory => _currentInstruction.MemorySize switch
+                {
+                    MemorySize.Int8 => 1,
+                    MemorySize.Int16 => 2,
+                    _ => throw new NotImplementedException()
+                },
+                _ => throw new NotImplementedException()
+            };
+
+            var result = sourceSize switch
+            {
+                (1) => GetOperandValueUInt8(_currentInstruction.Op1Kind, EnumOperandType.Source).ToUintSignExtended(),
+                (2) => GetOperandValueUInt16(_currentInstruction.Op1Kind, EnumOperandType.Source).ToUintSignExtended(),
+                _ => throw new NotImplementedException(),
+            };
+            return result;
+        }
+
+        /// <summary>
+        ///     Move with Zero-Extend
+        /// </summary>
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Movzx()
+        {
+
+            var result = _currentOperationSize switch
+            {
+                2 => Op_Movzx_16(),
+                4 => Op_Movzx_32(),
+                _ => throw new Exception("Unsupported Operation Size")
+            };
+
+            WriteToDestination(result);
+        }
+
+        /// <summary>
+        ///     Move with Zero-Extend to 16bit destination
+        /// </summary>
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
+        private ushort Op_Movzx_16()
+        {
+            var result = (ushort) GetOperandValueUInt8(_currentInstruction.Op1Kind, EnumOperandType.Source);
+            return result;
+        }
+
+        /// <summary>
+        ///     Move with Zero-Extend to 32bit destination
+        /// </summary>
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
+        private uint Op_Movzx_32()
+        {
+            var sourceSize = _currentInstruction.Op1Kind switch
+            {
+                OpKind.Register => GetSize(_currentInstruction.Op1Register),
+                OpKind.Memory => _currentInstruction.MemorySize switch
+                {
+                    MemorySize.UInt8 => 1,
+                    MemorySize.UInt16 => 2,
+                    _ => throw new NotImplementedException()
+                },
+                _ => throw new NotImplementedException()
+            };
+
+            var result = sourceSize switch
+            {
+                (1) => (uint) GetOperandValueUInt8(_currentInstruction.Op1Kind, EnumOperandType.Source),
+                (2) => (uint) GetOperandValueUInt16(_currentInstruction.Op1Kind, EnumOperandType.Source),
+                _ => throw new NotImplementedException(),
+            };
+            return result;
+        }
+
+        /// <summary>
         ///     Pop from Stack into the Flags Register
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Popf()
         {
             Registers.F = Pop();
         }
 
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Iret()
         {
             Registers.IP = Pop();
@@ -3631,7 +3804,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Floating Subtract ST0 from ST1
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fsubp()
         {
             var STdestination = GetOperandValueDouble(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -3649,7 +3822,7 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Change Sign of value in ST(0)
         /// </summary>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fchs()
         {
             FpuStack[Registers.Fpu.GetStackTop()] = -FpuStack[Registers.Fpu.GetStackTop()];
@@ -3658,21 +3831,23 @@ namespace MBBSEmu.CPU
         /// <summary>
         ///     Extended Shift Left
         /// </summary>
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Shld()
         {
-            uint result = 0;
+            uint result;
             switch (_currentOperationSize)
             {
                 case 4:
                     result = Op_Shld_32();
                     break;
                 default:
-                    break;
+                    throw new Exception("Unsupported Operation Size");
             }
 
             WriteToDestination(result);
         }
 
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
         private uint Op_Shld_32()
         {
             var destination = GetOperandValueUInt32(_currentInstruction.Op0Kind, EnumOperandType.Destination);
@@ -3712,7 +3887,7 @@ namespace MBBSEmu.CPU
         /// <param name="result"></param>
         /// <param name="destination"></param>
         /// <param name="source"></param>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         public void Flags_EvaluateCarry(EnumArithmeticOperation arithmeticOperation, byte result = 0,
             byte destination = 0, byte source = 0)
         {
@@ -3742,7 +3917,7 @@ namespace MBBSEmu.CPU
         /// <param name="result"></param>
         /// <param name="destination"></param>
         /// <param name="source"></param>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         public void Flags_EvaluateCarry(EnumArithmeticOperation arithmeticOperation, ushort result = 0,
             ushort destination = 0, ushort source = 0)
         {
@@ -3772,7 +3947,7 @@ namespace MBBSEmu.CPU
         /// <param name="result"></param>
         /// <param name="destination"></param>
         /// <param name="source"></param>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         public void Flags_EvaluateCarry(EnumArithmeticOperation arithmeticOperation, uint result = 0,
             uint destination = 0, uint source = 0)
         {
@@ -3802,7 +3977,7 @@ namespace MBBSEmu.CPU
         /// <param name="result"></param>
         /// <param name="destination"></param>
         /// <param name="source"></param>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         public void Flags_EvaluateOverflow(EnumArithmeticOperation arithmeticOperation, byte result = 0,
             byte destination = 0, byte source = 0)
         {
@@ -3868,7 +4043,7 @@ namespace MBBSEmu.CPU
         /// <param name="result"></param>
         /// <param name="destination"></param>
         /// <param name="source"></param>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         public void Flags_EvaluateOverflow(EnumArithmeticOperation arithmeticOperation, ushort result = 0,
             ushort destination = 0, ushort source = 0)
         {
@@ -3927,7 +4102,7 @@ namespace MBBSEmu.CPU
         /// <param name="result"></param>
         /// <param name="destination"></param>
         /// <param name="source"></param>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         public void Flags_EvaluateOverflow(EnumArithmeticOperation arithmeticOperation, uint result = 0,
             uint destination = 0, uint source = 0)
         {
@@ -3983,7 +4158,7 @@ namespace MBBSEmu.CPU
         ///     Evaluates and sets the value of both the Carry and Zero Flag based upon the specified result
         /// </summary>
         /// <param name="result"></param>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Flags_EvaluateSignZero(byte result)
         {
             if (result == 0)
@@ -4002,7 +4177,7 @@ namespace MBBSEmu.CPU
         ///     Evaluates and sets the value of both the Carry and Zero Flag based upon the specified result
         /// </summary>
         /// <param name="result"></param>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Flags_EvaluateSignZero(ushort result)
         {
             if (result == 0)
@@ -4021,7 +4196,7 @@ namespace MBBSEmu.CPU
         ///     Evaluates and sets the value of both the Carry and Zero Flag based upon the specified result
         /// </summary>
         /// <param name="result"></param>
-        [MethodImpl(CompilerOptimizations)]
+        [MethodImpl(OpcodeCompilerOptimizations)]
         private void Flags_EvaluateSignZero(uint result)
         {
             if (result == 0)
@@ -4034,6 +4209,45 @@ namespace MBBSEmu.CPU
                 Registers.F = Registers.F.ClearFlag((ushort)EnumFlags.ZF);
                 Registers.F = result.IsNegative() ? Registers.F.SetFlag((ushort)EnumFlags.SF) : Registers.F.ClearFlag((ushort)EnumFlags.SF);
             }
+        }
+
+        /// <summary>
+        ///     Returns the size of the given Register
+        /// </summary>
+        /// <param name="register"></param>
+        /// <returns></returns>
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        public byte GetSize(Register register)
+        {
+            return register switch
+            {
+                Register.AL => sizeof(byte),
+                Register.AH => sizeof(byte),
+                Register.BL => sizeof(byte),
+                Register.BH => sizeof(byte),
+                Register.CL => sizeof(byte),
+                Register.CH => sizeof(byte),
+                Register.DL => sizeof(byte),
+                Register.DH => sizeof(byte),
+                Register.AX => sizeof(ushort),
+                Register.BX => sizeof(ushort),
+                Register.CX => sizeof(ushort),
+                Register.DX => sizeof(ushort),
+                Register.SP => sizeof(ushort),
+                Register.BP => sizeof(ushort),
+                Register.SI => sizeof(ushort),
+                Register.DI => sizeof(ushort),
+                Register.ES => sizeof(ushort),
+                Register.CS => sizeof(ushort),
+                Register.SS => sizeof(ushort),
+                Register.DS => sizeof(ushort),
+                Register.EIP => sizeof(uint),
+                Register.EAX => sizeof(uint),
+                Register.EBX => sizeof(uint),
+                Register.ECX => sizeof(uint),
+                Register.EDX => sizeof(uint),
+                _ => throw new ArgumentOutOfRangeException(nameof(register), register, null)
+            };
         }
     }
 }

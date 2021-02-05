@@ -9,6 +9,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using MBBSEmu.HostProcess.ExportedModules;
 using MBBSEmu.Session.Enums;
 
 namespace MBBSEmu.Session
@@ -104,7 +105,12 @@ namespace MBBSEmu.Session
         /// <summary>
         ///     Last Character Received from the Client
         /// </summary>
-        public byte LastCharacterReceived { get; set; }
+        public byte CharacterReceived { get; set; }
+
+        /// <summary>
+        ///     Last Character Received after Processing
+        /// </summary>
+        public byte CharacterProcessed { get; set; }
 
         public FarPtr CharacterInterceptor { get; set; }
 
@@ -202,9 +208,9 @@ namespace MBBSEmu.Session
         public bool EchoSecureEnabled { get; set; }
 
         /// <summary>
-        ///
+        ///     Volatile Data for this specific Channel/Session
         /// </summary>
-        public byte InputMaximumLength { get; set; }
+        public byte[] VDA { get; set; }
 
         protected readonly IMbbsHost _mbbsHost;
 
@@ -240,8 +246,8 @@ namespace MBBSEmu.Session
             OutputEnabled = true;
             EchoBuffer = new MemoryStream(1024);
             InputBuffer = new MemoryStream(1024);
-
             InputCommand = new byte[] { 0x0 };
+            VDA = new byte[Majorbbs.VOLATILE_DATA_SIZE];
 
             _enumSessionState = startingSessionState;
             OnSessionStateChanged += (_, _) => mbbsHost.TriggerProcessing();
@@ -252,7 +258,8 @@ namespace MBBSEmu.Session
             if (!DataFromClient.TryTake(out var clientData, TimeSpan.FromSeconds(0)))
                 return;
 
-            LastCharacterReceived = clientData;
+            CharacterReceived = clientData;
+            CharacterProcessed = clientData;
 
             DataToProcess = true;
         }
@@ -261,7 +268,7 @@ namespace MBBSEmu.Session
 
         private static bool[] CreatePrintableCharacterArray()
         {
-            bool[] printableCharacters = Enumerable.Repeat(true, 256).ToArray();
+            var printableCharacters = Enumerable.Repeat(true, 256).ToArray();
 
             printableCharacters[0] = false; // \0
             printableCharacters[17] = false; // DC1   used by T-LORD

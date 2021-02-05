@@ -22,6 +22,11 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// <returns></returns>
         public const ushort Segment = 0xFFFD;
 
+        public new void Dispose()
+        {
+            base.Dispose();
+        }
+
         internal Phapi(IClock clock, ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary) : base(
             clock, logger, configuration, fileUtility, globalCache, module, channelDictionary)
         {
@@ -34,7 +39,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             {
                 var methodPointer = new FarPtr(0xFFFC, ordinal);
 #if DEBUG
-                //_logger.Debug($"Returning Method Offset {methodPointer.Segment:X4}:{methodPointer.Offset:X4}");
+                //_logger.Debug($"({Module.ModuleIdentifier}) Returning Method Offset {methodPointer.Segment:X4}:{methodPointer.Offset:X4}");
 #endif
                 return methodPointer.Data;
             }
@@ -109,7 +114,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             Module.Memory.SetWord(selector, allocatedMemorySegment.Segment);
             Module.Memory.SetWord(segment, allocatedMemorySegment.Segment);
 
-            _logger.Info($"Allocating {segmentSize} in Real-Mode memory at {allocatedMemorySegment}");
+            _logger.Debug($"({Module.ModuleIdentifier}) Allocating {segmentSize} in Real-Mode memory at {allocatedMemorySegment}");
 
             RealignStack(12);
 
@@ -190,7 +195,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
                                     Module.Memory.SetPointer("BB", btvFileStructPointer);
 
 #if DEBUG
-                                    _logger.Debug($"Opened file {fileName} and allocated it to {btvFileStructPointer}");
+                                    _logger.Debug($"({Module.ModuleIdentifier}) Opened file {fileName} and allocated it to {btvFileStructPointer}");
 #endif
 
                                     Registers.AX = 0;
@@ -228,13 +233,13 @@ namespace MBBSEmu.HostProcess.ExportedModules
                                 Registers.AX = 0;
                                 break;
                             default:
-                                throw new Exception($"Unknown Btrieve Operation: {(EnumBtrieveOperationCodes)btvda.funcno}");
+                                throw new Exception($"({Module.ModuleIdentifier}) Unknown Btrieve Operation: {(EnumBtrieveOperationCodes)btvda.funcno}");
                         }
 
                         break;
                     }
                 default:
-                    throw new Exception($"Unhandled Interrupt: {interruptNumber:X2}h");
+                    throw new Exception($"({Module.ModuleIdentifier}) Unhandled Interrupt: {interruptNumber:X2}h");
             }
 
             Module.Memory.SetArray(registerPointer, regs.Data);

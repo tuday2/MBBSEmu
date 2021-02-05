@@ -21,6 +21,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
+using MBBSEmu.TextVariables;
 
 namespace MBBSEmu.HostProcess
 {
@@ -113,7 +114,7 @@ namespace MBBSEmu.HostProcess
 
         private readonly IAccountKeyRepository _accountKeyRepository;
         private readonly IAccountRepository _accountRepository;
-
+        
         public MbbsHost(IClock clock, ILogger logger, IGlobalCache globalCache, IFileUtility fileUtility, IEnumerable<IHostRoutine> mbbsRoutines, AppSettings configuration, IEnumerable<IGlobalRoutine> globalRoutines, IAccountKeyRepository accountKeyRepository, IAccountRepository accountRepository, PointerDictionary<SessionBase> channelDictionary)
         {
             Logger = logger;
@@ -502,6 +503,9 @@ namespace MBBSEmu.HostProcess
         /// <param name="session"></param>
         private void ExitModule(SessionBase session)
         {
+            //Clear VDA
+            Array.Clear(session.VDA,0, Majorbbs.VOLATILE_DATA_SIZE);
+
             session.SessionState = EnumSessionState.MainMenuDisplay;
             session.CurrentModule = null;
             session.CharacterInterceptor = null;
@@ -598,9 +602,11 @@ namespace MBBSEmu.HostProcess
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void ProcessBTUCHI(SessionBase session)
         {
+            var channelInputBufferSizeBefore = session.InputBuffer.Length;
+
             //Create Parameters for BTUCHI Routine
             var initialStackValues = new Queue<ushort>(2);
-            initialStackValues.Enqueue(session.LastCharacterReceived);
+            initialStackValues.Enqueue(session.CharacterReceived);
             initialStackValues.Enqueue(session.Channel);
 
             var result = Run(session.CurrentModule.ModuleIdentifier,
@@ -612,9 +618,9 @@ namespace MBBSEmu.HostProcess
             //would clear out AH before assigning AL
             result &= 0xFF;
 
-            session.LastCharacterReceived = (byte)result;
+            session.CharacterProcessed = (byte)result;
 
-            if (session.LastCharacterReceived == 0xD)
+            if (session.CharacterProcessed == 0xD)
                 session.Status = 3;
         }
 
@@ -780,7 +786,7 @@ namespace MBBSEmu.HostProcess
         private void ProcessIncomingCharacter(SessionBase session)
         {
             //Handling Incoming Characters
-            switch (session.LastCharacterReceived)
+            switch (session.CharacterReceived)
             {
                 //Backspace
                 case 127 when session.SessionState == EnumSessionState.InModule:
@@ -796,13 +802,19 @@ namespace MBBSEmu.HostProcess
 
                 //Enter or Return
                 case 0xD when !session.TransparentMode && session.SessionState != EnumSessionState.InFullScreenDisplay:
-                    {
-                        if (!session.TransparentMode)
-                            session.SendToClient(new byte[] { 0xD, 0xA });
+                {
+                        //If we're in transparent mode or BTUCHI has changed the character to null, don't echo
+                        if (!session.TransparentMode && session.CharacterProcessed > 0)
+                            session.SendToClient(new byte[] {0xD, 0xA});
 
-                        //Set Status == 3, which means there is a Command Ready
-                        session.Status = 3;
-                        session.EchoSecureEnabled = false;
+                        //If BTUCHI Injected a deferred Execution Status, respect that vs. processing the input
+                        if (!session.StatusChange && session.Status != 240)
+                        {
+                            //Set Status == 3, which means there is a Command Ready
+                            session.Status = 3;
+                            session.EchoSecureEnabled = false;
+                        }
+
                         break;
                     }
 
@@ -815,16 +827,19 @@ namespace MBBSEmu.HostProcess
                         if (session.EchoSecureEnabled && session.InputBuffer.Length >= session.ExtUsrAcc.wid)
                             break;
 
-                        session.InputBuffer.WriteByte(session.LastCharacterReceived);
-
-                        //If the client is in transparent mode, don't echo
-                        if (!session.TransparentMode &&
-                            (session.Status == 0 || session.Status == 1 || session.Status == 192))
+                        if (session.CharacterProcessed > 0)
                         {
-                            //Check for Secure Echo being Enabled
-                            session.SendToClient(session.EchoSecureEnabled
-                                ? new[] { session.ExtUsrAcc.ech }
-                                : new[] { session.LastCharacterReceived });
+                            session.InputBuffer.WriteByte(session.CharacterProcessed);
+
+                            //If the client is in transparent mode, don't echo
+                            if (!session.TransparentMode &&
+                                (session.Status == 0 || session.Status == 1 || session.Status == 192))
+                            {
+                                //Check for Secure Echo being Enabled
+                                session.SendToClient(session.EchoSecureEnabled
+                                    ? new[] {session.ExtUsrAcc.ech}
+                                    : new[] {session.CharacterReceived});
+                            }
                         }
 
                         break;
@@ -1059,7 +1074,7 @@ namespace MBBSEmu.HostProcess
                                                 break;
                                             }
                                         default:
-                                            Logger.Error($"Unknown or Unimplemented Imported Library: {dll.File.ImportedNameTable[nametableOrdinal].Name}");
+                                            Logger.Error($"({module.ModuleIdentifier}) Unknown or Unimplemented Imported Library: {dll.File.ImportedNameTable[nametableOrdinal].Name}");
                                             continue;
                                             //throw new Exception(
                                             //    $"Unknown or Unimplemented Imported Library: {dll.File.ImportedNameTable[nametableOrdinal].Name}");
@@ -1194,7 +1209,10 @@ namespace MBBSEmu.HostProcess
             {
                 _modules.Remove(m.Value.ModuleIdentifier);
                 foreach (var e in _exportedFunctions.Keys.Where(x => x.StartsWith(m.Value.ModuleIdentifier)))
+                {
+                    _exportedFunctions[e].Dispose();
                     _exportedFunctions.Remove(e);
+                }
             }
 
             Logger.Info("NIGHTLY CLEANUP COMPLETE -- RESTARTING HOST");

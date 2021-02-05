@@ -34,6 +34,11 @@ namespace MBBSEmu.HostProcess.ExportedModules
         private const ushort ERROR_CHANNEL_NOT_DEFINED = 0xFFF6;
         private const ushort ERROR_CHANNEL_OUT_OF_RANGE = 0xFFF5;
 
+        public new void Dispose()
+        {
+            base.Dispose();
+        }
+
         public Galgsbl(IClock clock, ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary) : base(
             clock, logger, configuration, fileUtility, globalCache, module, channelDictionary)
         {
@@ -45,7 +50,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             if (!string.IsNullOrEmpty(_configuration.GetBTURNO(Module.ModuleIdentifier)))
             {
                 bturno = _configuration.GetBTURNO(Module.ModuleIdentifier);
-                _logger.Info($"Found Module Specific BTURNO # for {Module.ModuleIdentifier}. Setting BTURNO to: {bturno}");
+                _logger.Info($"{Module.ModuleIdentifier} Found Module Specific BTURNO # -- Setting BTURNO to: {bturno}");
             }
 
             //Sanity Check
@@ -757,7 +762,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             if (MonitoredChannel2 == 0xFFFF)
                 return;
 
-            ChannelDictionary[MonitoredChannel2].LastCharacterReceived = (byte)character;
+            ChannelDictionary[MonitoredChannel2].CharacterReceived = (byte)character;
             ChannelDictionary[MonitoredChannel2].InputBuffer.WriteByte((byte)character);
             ChannelDictionary[MonitoredChannel2].DataToProcess = true;
         }
@@ -1016,7 +1021,8 @@ namespace MBBSEmu.HostProcess.ExportedModules
                 return;
             }
 
-            channel.InputBuffer.WriteByte(character);
+            if(character != 0xD)
+                channel.InputBuffer.WriteByte(character);
         }
     }
 }

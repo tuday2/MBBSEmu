@@ -21,6 +21,11 @@ namespace MBBSEmu.HostProcess.ExportedModules
         public const ushort DosSegmentBase = 0x200;
         public ushort DosSegmentOffset = 0;
 
+        public new void Dispose()
+        {
+            base.Dispose();
+        }
+
         internal Doscalls(IClock clock, ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary) : base(
             clock, logger, configuration, fileUtility, globalCache, module, channelDictionary)
         {
@@ -122,7 +127,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// </summary>
         public void DosGetModHandle()
         {
-            _logger.Warn($"Getting External Modules is currently not supported");
+            _logger.Warn($"({Module.ModuleIdentifier}) Getting External Modules is currently not supported");
             Registers.AX = 0;
         }
 
@@ -161,7 +166,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// </summary>
         public void DosGetProcAddr()
         {
-            _logger.Warn($"Getting External Procedures is currently not supported");
+            _logger.Warn($"({Module.ModuleIdentifier}) Getting External Procedures is currently not supported");
             Registers.AX = 6;
             RealignStack(10);
         }

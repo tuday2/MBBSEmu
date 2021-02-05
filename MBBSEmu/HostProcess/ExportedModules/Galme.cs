@@ -17,6 +17,11 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// <returns></returns>
         public const ushort Segment = 0xFFFC;
 
+        public new void Dispose()
+        {
+            base.Dispose();
+        }
+
         internal Galme(IClock clock, ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary) : base(
             clock, logger, configuration, fileUtility, globalCache, module, channelDictionary)
         {
@@ -44,6 +49,9 @@ namespace MBBSEmu.HostProcess.ExportedModules
 
             switch (ordinal)
             {
+                case 10:
+                    gforac();
+                    break;
                 case 30:
                     oldsend();
                     break;
@@ -94,6 +102,21 @@ namespace MBBSEmu.HostProcess.ExportedModules
         {
 #if DEBUG
             _logger.Warn("Ignoring OLDSEND for now, messaging not enabled in MBBSEmu");
+#endif
+            Registers.AX = 1;
+        }
+
+        /// <summary>
+        ///     Returns standard access level code
+        ///
+        ///     Signature: int gforac(const CHAR *uid, USHORT fid)
+        /// </summary>
+        private void gforac()
+        {
+            //var userId = GetParameterString(0);
+            var forumId = GetParameter(2);
+#if DEBUG
+            _logger.Warn("Ignoring GFORAC for now, messaging not enabled in MBBSEmu");
 #endif
             Registers.AX = 1;
         }

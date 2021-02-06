@@ -4816,14 +4816,15 @@ namespace MBBSEmu.HostProcess.ExportedModules
             var stringToStripPointer = GetParameterPointer(0);
             var stringToStrip = Module.Memory.GetString(stringToStripPointer);
 
-            var resultsStripped = new Regex(@"\x1b\[[0-9;]*m").Replace(Encoding.ASCII.GetString(stringToStrip.ToArray()), string.Empty);
-
+            //var resultsStripped = new Regex(@"\x1b\[[0-9;]*m").Replace(Encoding.ASCII.GetString(stringToStrip.ToArray()), string.Empty);
+            var resultsStripped = new AnsiParser().ParseAnsiString(stringToStrip);
 #if DEBUG
             _logger.Debug($"({Module.ModuleIdentifier}) Stripping ANSI");
 #endif
-            Module.Memory.SetArray(stringToStripPointer, Encoding.ASCII.GetBytes(resultsStripped));
-            Registers.SetPointer(stringToStripPointer);
+            //Module.Memory.SetArray(stringToStripPointer, Encoding.ASCII.GetBytes(resultsStripped));
+            Module.Memory.SetArray(stringToStripPointer, resultsStripped);
 
+            Registers.SetPointer(stringToStripPointer);
         }
 
         /// <summary>
@@ -5019,7 +5020,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
 
 
         /// <summary>
-        ///     Read raw value of CNF option
+        ///     Get a single character from an MCV file
         ///
         ///     Signature: char result=chropt(msgnum)
         /// </summary>

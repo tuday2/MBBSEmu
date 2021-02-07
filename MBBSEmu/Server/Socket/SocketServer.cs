@@ -4,6 +4,7 @@ using MBBSEmu.Session;
 using MBBSEmu.Session.Enums;
 using MBBSEmu.Session.Rlogin;
 using MBBSEmu.Session.Telnet;
+using MBBSEmu.TextVariables;
 using NLog;
 using System;
 using System.Net;
@@ -23,6 +24,7 @@ namespace MBBSEmu.Server.Socket
     {
         private readonly ILogger _logger;
         private readonly IMbbsHost _host;
+        private readonly ITextVariableService _textVariableService;
         private readonly AppSettings _configuration;
 
         private System.Net.Sockets.Socket _listenerSocket;
@@ -30,21 +32,22 @@ namespace MBBSEmu.Server.Socket
         private string _moduleIdentifier;
         private readonly PointerDictionary<SessionBase> _channelDictionary;
 
-        public SocketServer(ILogger logger, IMbbsHost host, AppSettings configuration, PointerDictionary<SessionBase> channelDictionary)
+        public SocketServer(ILogger logger, IMbbsHost host, AppSettings configuration, ITextVariableService textVariableService, PointerDictionary<SessionBase> channelDictionary)
         {
             _logger = logger;
             _host = host;
             _configuration = configuration;
+            _textVariableService = textVariableService;
             _channelDictionary = channelDictionary;
         }
 
-        public void Start(EnumSessionType sessionType, int port, string moduleIdentifier = null)
+        public void Start(EnumSessionType sessionType, string hostIpAddress, int port, string moduleIdentifier = null)
         {
             _sessionType = sessionType;
             _moduleIdentifier = moduleIdentifier;
 
             //Setup Listener
-            var ipEndPoint = new IPEndPoint(IPAddress.Any, port);
+            var ipEndPoint = new IPEndPoint(IPAddress.Parse(hostIpAddress), port);
             _listenerSocket = new System.Net.Sockets.Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
             _listenerSocket.Bind(ipEndPoint);
@@ -96,7 +99,7 @@ namespace MBBSEmu.Server.Socket
                         }
 
                         _logger.Info($"Accepting incoming Telnet connection from {client.RemoteEndPoint}...");
-                        var session = new TelnetSession(_logger, client, _configuration);
+                        var session = new TelnetSession(_host, _logger, client, _configuration, _textVariableService);
                         _host.AddSession(session);
                         session.Start();
                         break;
@@ -112,7 +115,7 @@ namespace MBBSEmu.Server.Socket
                         }
 
                         _logger.Info($"Accepting incoming Rlogin connection from {client.RemoteEndPoint}...");
-                        var session = new RloginSession(_host, _logger, client, _channelDictionary, _configuration, _moduleIdentifier);
+                        var session = new RloginSession(_host, _logger, client, _channelDictionary, _configuration, _textVariableService, _moduleIdentifier);
                         _host.AddSession(session);
                         session.Start();
                         break;

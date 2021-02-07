@@ -1,4 +1,5 @@
 using MBBSEmu.CPU;
+using MBBSEmu.Date;
 using MBBSEmu.Disassembler;
 using MBBSEmu.HostProcess.ExecutionUnits;
 using MBBSEmu.HostProcess.ExportedModules;
@@ -9,6 +10,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using MBBSEmu.DOS.Interrupts;
+using MBBSEmu.DOS.Structs;
 
 namespace MBBSEmu.Module
 {
@@ -25,15 +28,14 @@ namespace MBBSEmu.Module
     /// </summary>
     public class MbbsModule
     {
-        private protected readonly ILogger _logger;
-        private protected readonly IFileUtility _fileUtility;
+        protected readonly ILogger _logger;
+        protected readonly IFileUtility _fileUtility;
+        private protected readonly IClock _clock;
 
         /// <summary>
-        ///     State returned by REGISTER_MODULE
-        ///
-        ///     Used to identify module within The MajorBBS/Worldgroup
+        ///     Module Memory Manager
         /// </summary>
-        public short StateCode { get; set; }
+        public IMemoryCore Memory;
 
         /// <summary>
         ///     The unique name of the module (same as the DLL name)
@@ -44,16 +46,12 @@ namespace MBBSEmu.Module
         ///     Directory Path of Module
         /// </summary>
         public readonly string ModulePath;
-        
+
         /// <summary>
         ///     Menu Option Key of Module
         /// </summary>
         public string MenuOptionKey { get; set; }
 
-        /// <summary>
-        ///     Module DLL
-        /// </summary>
-        public readonly NEFile File;
 
         /// <summary>
         ///     Module MSG File
@@ -64,16 +62,6 @@ namespace MBBSEmu.Module
         ///     Module MDF File
         /// </summary>
         public readonly MdfFile Mdf;
-
-        /// <summary>
-        ///     Module Memory Manager
-        /// </summary>
-        public readonly IMemoryCore Memory;
-
-        /// <summary>
-        ///     Entry Points for the Module, as defined by register_module()
-        /// </summary>
-        public Dictionary<string, IntPtr16> EntryPoints { get; set; }
 
         /// <summary>
         ///     Routine definitions for functions registered via RTKICK
@@ -93,12 +81,27 @@ namespace MBBSEmu.Module
         /// <summary>
         ///     Text Variable definitions for variables registered via REGISTER_VARIABLE
         /// </summary>
-        public Dictionary<string, IntPtr16> TextVariables { get; set; }
+        public Dictionary<string, FarPtr> TextVariables { get; set; }
 
         /// <summary>
         ///     Global Command Handler Definitions for modules that register global commands
         /// </summary>
-        public List<IntPtr16> GlobalCommandHandlers { get; set; }
+        public List<FarPtr> GlobalCommandHandlers { get; set; }
+
+        /// <summary>
+        ///     Description of the Module as Defined by REGISTER_MODULE
+        /// </summary>
+        public string ModuleDescription { get; set; }
+
+        /// <summary>
+        ///     Required DLL's are DLL Files that are referenced by the Module
+        /// </summary>
+        public List<MbbsDll> ModuleDlls { get; set; }
+
+        /// <summary>
+        ///     Helper to always return the main Module DLL (loaded in 0)
+        /// </summary>
+        public MbbsDll MainModuleDll => ModuleDlls?[0];
 
         /// <summary>
         ///     Executions Units (EU's) for the Module
@@ -126,23 +129,24 @@ namespace MBBSEmu.Module
         public Dictionary<ushort, IExportedModule> ExportedModuleDictionary { get; set; }
 
         /// <summary>
-        ///     Description of the Module as Defined by REGISTER_MODULE
-        /// </summary>
-        public string ModuleDescription { get; set; }
-
-        /// <summary>
         ///     Constructor for MbbsModule
-        ///
+        /// 
         ///     Pass in an empty/blank moduleIdentifier for a Unit Test/Fake Module
         /// </summary>
+        /// <param name="logger"></param>
         /// <param name="moduleIdentifier">Will be null in a test</param>
         /// <param name="path"></param>
         /// <param name="memoryCore"></param>
-        public MbbsModule(IFileUtility fileUtility, ILogger logger, string moduleIdentifier, string path = "", MemoryCore memoryCore = null)
+        /// <param name="fileUtility"></param>
+        public MbbsModule(IFileUtility fileUtility, IClock clock, ILogger logger, string moduleIdentifier, string path = "", MemoryCore memoryCore = null)
         {
             _fileUtility = fileUtility;
             _logger = logger;
+            _clock = clock;
+            
             ModuleIdentifier = moduleIdentifier;
+            ModuleDlls = new List<MbbsDll>();
+
 
             //Sanitize and setup Path
             if (string.IsNullOrEmpty(path))
@@ -157,7 +161,7 @@ namespace MBBSEmu.Module
             if (string.IsNullOrEmpty(ModuleIdentifier))
             {
                 Mdf = MdfFile.createForTest();
-                File = NEFile.createForTest();
+                ModuleDlls.Add(new MbbsDll(fileUtility, logger) { File = NEFile.createForTest() });
             }
             else
             {
@@ -170,65 +174,91 @@ namespace MBBSEmu.Module
                 }
 
                 Mdf = new MdfFile(fullMdfFilePath);
+                var moduleDll = new MbbsDll(fileUtility, logger);
+                moduleDll.Load(Mdf.DLLFiles[0].Trim(), ModulePath);
+                ModuleDlls.Add(moduleDll);
 
-                var trimmedDll = Mdf.DLLFiles[0].Trim();
-                var neFile = fileUtility.FindFile(ModulePath, $"{trimmedDll}.DLL");
-                var fullNeFilePath = Path.Combine(ModulePath, neFile);
-                File = new NEFile(_logger, fullNeFilePath);
-            }
 
-            if (Mdf.MSGFiles.Count > 0)
-            {
-                Msgs = new List<MsgFile>(Mdf.MSGFiles.Count);
-                foreach (var m in Mdf.MSGFiles)
+                if (Mdf.Requires.Count > 0)
                 {
-                    Msgs.Add(new MsgFile(ModulePath, m));
+                    foreach (var r in Mdf.Requires)
+                    {
+                        var requiredDll = new MbbsDll(fileUtility, logger);
+                        if (requiredDll.Load(r.Trim(), ModulePath))
+                        {
+                            requiredDll.SegmentOffset = (ushort) (ModuleDlls.Sum(x => x.File.SegmentTable.Count) + 1);
+                            ModuleDlls.Add(requiredDll);
+                        }
+                    }
+                }
+
+                if (Mdf.MSGFiles.Count > 0)
+                {
+                    Msgs = new List<MsgFile>(Mdf.MSGFiles.Count);
+                    foreach (var m in Mdf.MSGFiles)
+                    {
+                        Msgs.Add(new MsgFile(ModulePath, m));
+                    }
                 }
             }
 
             //Set Initial Values
-            EntryPoints = new Dictionary<string, IntPtr16>();
             RtkickRoutines = new PointerDictionary<RealTimeRoutine>();
             RtihdlrRoutines = new PointerDictionary<RealTimeRoutine>();
             TaskRoutines = new PointerDictionary<RealTimeRoutine>();
-            TextVariables = new Dictionary<string, IntPtr16>();
+            TextVariables = new Dictionary<string, FarPtr>();
+            GlobalCommandHandlers = new List<FarPtr>();
+            ExportedModuleDictionary = new Dictionary<ushort, IExportedModule>(6);
             ExecutionUnits = new Queue<ExecutionUnit>(2);
-            ExportedModuleDictionary = new Dictionary<ushort, IExportedModule>(4);
-            GlobalCommandHandlers = new List<IntPtr16>();
+            
             Memory = memoryCore ?? new MemoryCore();
 
-            //If it's a Test, setup a fake _INIT_
-            if (string.IsNullOrEmpty(ModuleIdentifier))
+            //Declare PSP Segment
+            var psp = new PSPStruct { NextSegOffset = 0x9FFF, EnvSeg = 0xFFFF };
+            Memory.AddSegment(0x4000);
+            Memory.SetArray(0x4000, 0, psp.Data);
+
+            Memory.AllocateVariable("Int21h-PSP", sizeof(ushort));
+            Memory.SetWord("Int21h-PSP", 0x4000);
+
+            //Find _INIT_ values if any
+            foreach (var dll in ModuleDlls)
             {
-                EntryPoints["_INIT_"] = null;
-                return;
+                //If it's a Test, setup a fake _INIT_
+                if (string.IsNullOrEmpty(ModuleIdentifier))
+                {
+                    dll.EntryPoints["_INIT_"] = null;
+                    return;
+                }
+
+                //Setup _INIT_ Entrypoint
+                FarPtr initEntryPointPointer;
+                var initResidentName = dll.File.ResidentNameTable.FirstOrDefault(x => x.Name.StartsWith("_INIT__"));
+                if (initResidentName == null)
+                {
+                    //This only happens with MajorMUD -- I have no idea why it's a special little snowflake ¯\_(ツ)_/¯
+                    _logger.Warn($"({moduleIdentifier}) Unable to locate _INIT_ in Resident Name Table, checking Non-Resident Name Table...");
+
+                    var initNonResidentName = dll.File.NonResidentNameTable.FirstOrDefault(x => x.Name.StartsWith("_INIT__"));
+
+                    if (initNonResidentName == null)
+                        throw new Exception("Unable to locate _INIT__ entry in Resident Name Table");
+
+                    var initEntryPoint = dll.File.EntryTable.First(x => x.Ordinal == initNonResidentName.IndexIntoEntryTable);
+                    
+                    initEntryPointPointer = new FarPtr((ushort) (initEntryPoint.SegmentNumber + dll.SegmentOffset), initEntryPoint.Offset);
+                    
+                }
+                else
+                {
+                    var initEntryPoint = dll.File.EntryTable.First(x => x.Ordinal == initResidentName.IndexIntoEntryTable);
+                    initEntryPointPointer = new FarPtr((ushort)(initEntryPoint.SegmentNumber + dll.SegmentOffset), initEntryPoint.Offset);
+                }
+
+
+                _logger.Debug($"({ModuleIdentifier}) Located _INIT__: {initEntryPointPointer}");
+                dll.EntryPoints["_INIT_"] = initEntryPointPointer;
             }
-
-            //Setup _INIT_ Entrypoint
-            IntPtr16 initEntryPointPointer;
-            var initResidentName = File.ResidentNameTable.FirstOrDefault(x => x.Name.StartsWith("_INIT__"));
-            if (initResidentName == null)
-            {
-                //This only happens with MajorMUD -- I have no idea why it's a special little snowflake ¯\_(ツ)_/¯
-                _logger.Warn("Unable to locate _INIT_ in Resident Name Table, checking Non-Resident Name Table...");
-
-                var initNonResidentName = File.NonResidentNameTable.FirstOrDefault(x => x.Name.StartsWith("_INIT__"));
-
-                if (initNonResidentName == null)
-                    throw new Exception("Unable to locate _INIT__ entry in Resident Name Table");
-
-                var initEntryPoint = File.EntryTable.First(x => x.Ordinal == initNonResidentName.IndexIntoEntryTable);
-                initEntryPointPointer = new IntPtr16(initEntryPoint.SegmentNumber, initEntryPoint.Offset);
-            }
-            else
-            {
-                var initEntryPoint = File.EntryTable.First(x => x.Ordinal == initResidentName.IndexIntoEntryTable);
-                initEntryPointPointer = new IntPtr16(initEntryPoint.SegmentNumber, initEntryPoint.Offset);
-            }
-
-
-            _logger.Info($"Located _INIT__: {initEntryPointPointer}");
-            EntryPoints["_INIT_"] = initEntryPointPointer;
         }
 
         /// <summary>
@@ -244,14 +274,25 @@ namespace MBBSEmu.Module
         ///     stack pointer enough to where the stack on the nested call won't overlap with the stack on the parent caller.
         /// </param>
         /// <returns></returns>
-        public CpuRegisters Execute(IntPtr16 entryPoint, ushort channelNumber, bool simulateCallFar = false, bool bypassSetState = false,
+        public CpuRegisters Execute(FarPtr entryPoint, ushort channelNumber, bool simulateCallFar = false, bool bypassSetState = false,
             Queue<ushort> initialStackValues = null, ushort initialStackPointer = CpuCore.STACK_BASE)
         {
+            //Set the proper DLL making the call based on the Segment
+            for (ushort i = 0; i < ModuleDlls.Count; i++)
+            {
+                var dll = ModuleDlls[i];
+                if (entryPoint.Segment >= dll.SegmentOffset &&
+                    entryPoint.Segment <= (dll.SegmentOffset + dll.File.SegmentTable.Count))
+
+                    foreach (var (_, value) in ExportedModuleDictionary)
+                        ((ExportedModuleBase)value).ModuleDll = i;
+            }
+
             //Try to dequeue an execution unit, if one doesn't exist, create a new one
             if (!ExecutionUnits.TryDequeue(out var executionUnit))
             {
-                _logger.Warn($"{ModuleIdentifier} exhausted execution Units, creating additional");
-                executionUnit = new ExecutionUnit(Memory, ExportedModuleDictionary, _logger);
+                _logger.Debug($"({ModuleIdentifier}) Exhausted execution Units, creating additional");
+                executionUnit = new ExecutionUnit(Memory, _clock, ExportedModuleDictionary, _logger, ModulePath);
             }
 
             var resultRegisters = executionUnit.Execute(entryPoint, channelNumber, simulateCallFar, bypassSetState, initialStackValues, initialStackPointer);

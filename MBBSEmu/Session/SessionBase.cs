@@ -1,14 +1,18 @@
-using System;
+using MBBSEmu.HostProcess;
+using MBBSEmu.HostProcess.ExportedModules;
 using MBBSEmu.HostProcess.Structs;
 using MBBSEmu.Memory;
 using MBBSEmu.Module;
 using MBBSEmu.Server;
+using MBBSEmu.Session.Enums;
+using MBBSEmu.TextVariables;
+using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
-using MBBSEmu.Session.Enums;
 
 namespace MBBSEmu.Session
 {
@@ -70,10 +74,17 @@ namespace MBBSEmu.Session
         /// </summary>
         public bool StatusChange { get; set; }
 
-        /// <summary>
-        ///     Current State of this Users Session
-        /// </summary>
-        public virtual EnumSessionState SessionState { get; set; }
+        private EnumSessionState _enumSessionState;
+
+        public event EventHandler<EnumSessionState> OnSessionStateChanged;
+
+        public EnumSessionState SessionState {
+            get => _enumSessionState;
+            set {
+                _enumSessionState = value;
+                OnSessionStateChanged?.Invoke(this, value);
+            }
+        }
 
         /// <summary>
         ///     GSBL Echo Buffer
@@ -96,14 +107,19 @@ namespace MBBSEmu.Session
         /// <summary>
         ///     Last Character Received from the Client
         /// </summary>
-        public byte LastCharacterReceived { get; set; }
+        public byte CharacterReceived { get; set; }
 
-        public IntPtr16 CharacterInterceptor { get; set; }
+        /// <summary>
+        ///     Last Character Received after Processing
+        /// </summary>
+        public byte CharacterProcessed { get; set; }
+
+        public FarPtr CharacterInterceptor { get; set; }
 
         /// <summary>
         ///     Routine that is called by BEGIN_POLLING for this user number
         /// </summary>
-        public IntPtr16 PollingRoutine { get; set; }
+        public FarPtr PollingRoutine { get; set; }
 
         /// <summary>
         ///     Prompt Character set by BTUPMT
@@ -194,9 +210,15 @@ namespace MBBSEmu.Session
         public bool EchoSecureEnabled { get; set; }
 
         /// <summary>
-        ///     
+        ///     Volatile Data for this specific Channel/Session
         /// </summary>
-        public byte InputMaximumLength { get; set; }
+        public byte[] VDA { get; set; }
+
+        public Dictionary<string, TextVariable.TextVariableValueDelegate> SessionVariables;
+
+        private readonly ITextVariableService _textVariableService;
+        protected readonly IMbbsHost _mbbsHost;
+
 
         /// <summary>
         ///     Helper Method to send data to the client synchronously
@@ -206,7 +228,10 @@ namespace MBBSEmu.Session
         {
             if (OutputEnabled)
             {
-                SendToClientMethod(dataToSend.Where(shouldSendToClient).ToArray());
+                var dataToSendSpan = new ReadOnlySpan<byte>(dataToSend);
+                var dataToSendProcessed = _textVariableService.Parse(dataToSendSpan, SessionVariables).ToArray();
+
+                SendToClientMethod(dataToSendProcessed.Where(shouldSendToClient).ToArray());
             }
         }
 
@@ -216,8 +241,10 @@ namespace MBBSEmu.Session
 
         public abstract void Stop();
 
-        protected SessionBase(string sessionId)
+        protected SessionBase(IMbbsHost mbbsHost, string sessionId, EnumSessionState startingSessionState, ITextVariableService textVariableService)
         {
+            _mbbsHost = mbbsHost;
+            _textVariableService = textVariableService;
             SessionId = sessionId;
             UsrPtr = new User();
             UsrAcc = new UserAccount();
@@ -229,8 +256,15 @@ namespace MBBSEmu.Session
             OutputEnabled = true;
             EchoBuffer = new MemoryStream(1024);
             InputBuffer = new MemoryStream(1024);
-
             InputCommand = new byte[] { 0x0 };
+            VDA = new byte[Majorbbs.VOLATILE_DATA_SIZE];
+            SessionVariables = new Dictionary<string, TextVariable.TextVariableValueDelegate>
+            {
+                {"CHANNEL", () => Channel.ToString()}, {"USERID", () => Username}
+            };
+
+            _enumSessionState = startingSessionState;
+            OnSessionStateChanged += (_, _) => mbbsHost.TriggerProcessing();
         }
 
         public void ProcessDataFromClient()
@@ -238,7 +272,8 @@ namespace MBBSEmu.Session
             if (!DataFromClient.TryTake(out var clientData, TimeSpan.FromSeconds(0)))
                 return;
 
-            LastCharacterReceived = clientData;
+            CharacterReceived = clientData;
+            CharacterProcessed = clientData;
 
             DataToProcess = true;
         }
@@ -247,7 +282,7 @@ namespace MBBSEmu.Session
 
         private static bool[] CreatePrintableCharacterArray()
         {
-            bool[] printableCharacters = Enumerable.Repeat(true, 256).ToArray();
+            var printableCharacters = Enumerable.Repeat(true, 256).ToArray();
 
             printableCharacters[0] = false; // \0
             printableCharacters[17] = false; // DC1   used by T-LORD

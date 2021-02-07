@@ -1,4 +1,5 @@
 ﻿using MBBSEmu.CPU;
+using MBBSEmu.Date;
 using MBBSEmu.IO;
 using MBBSEmu.Memory;
 using MBBSEmu.Module;
@@ -10,8 +11,16 @@ namespace MBBSEmu.HostProcess.ExportedModules
 {
     public class Galmsg : ExportedModuleBase, IExportedModule
     {
-        internal Galmsg(ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary) : base(
-            logger, configuration, fileUtility, globalCache, module, channelDictionary)
+
+        public const ushort Segment = 0xFFFA;
+
+        public new void Dispose()
+        {
+            base.Dispose();
+        }
+
+        internal Galmsg(IClock clock, ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary) : base(
+            clock, logger, configuration, fileUtility, globalCache, module, channelDictionary)
         {
         }
 
@@ -19,9 +28,9 @@ namespace MBBSEmu.HostProcess.ExportedModules
         {
             if (offsetsOnly)
             {
-                var methodPointer = new IntPtr16(0xFFFC, ordinal);
+                var methodPointer = new FarPtr(0xFFFC, ordinal);
 #if DEBUG
-                //_logger.Info($"Returning Method Offset {methodPointer.Segment:X4}:{methodPointer.Offset:X4}");
+                //_logger.Debug($"Returning Method Offset {methodPointer.Segment:X4}:{methodPointer.Offset:X4}");
 #endif
                 return methodPointer.Data;
             }
@@ -36,17 +45,17 @@ namespace MBBSEmu.HostProcess.ExportedModules
 
         public void SetState(ushort channelNumber)
         {
-            throw new NotImplementedException();
+            return;
         }
 
         public void SetRegisters(CpuRegisters registers)
         {
-            throw new NotImplementedException();
+            return;
         }
 
         public void UpdateSession(ushort channelNumber)
         {
-            throw new NotImplementedException();
+            return;
         }
     }
 }

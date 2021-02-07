@@ -16,7 +16,7 @@ namespace MBBSEmu.Memory
         /// </summary>
         /// <param name="name"></param>
         /// <returns></returns>
-        IntPtr16 GetVariablePointer(string name);
+        FarPtr GetVariablePointer(string name);
 
         /// <summary>
         ///     Safe retrieval of a pointer to a defined variable
@@ -26,7 +26,7 @@ namespace MBBSEmu.Memory
         /// <param name="name"></param>
         /// <param name="pointer"></param>
         /// <returns></returns>
-        bool TryGetVariablePointer(string name, out IntPtr16 pointer);
+        bool TryGetVariablePointer(string name, out FarPtr pointer);
 
         /// <summary>
         ///     Safely try to retrieve a variable, or allocate it if it's not present
@@ -38,7 +38,7 @@ namespace MBBSEmu.Memory
         ///     desired variable of NAME of SIZE, but also a 2 byte variable named "*NAME" which holds a pointer to NAME
         /// </param>
         /// <returns></returns>
-        IntPtr16 GetOrAllocateVariablePointer(string name, ushort size = 0x0, bool declarePointer = false);
+        FarPtr GetOrAllocateVariablePointer(string name, ushort size = 0x0, bool declarePointer = false);
 
         /// <summary>
         ///     Allocates the specified variable name with the desired size
@@ -47,7 +47,7 @@ namespace MBBSEmu.Memory
         /// <param name="size"></param>
         /// <param name="declarePointer"></param>
         /// <returns></returns>
-        IntPtr16 AllocateVariable(string name, ushort size, bool declarePointer = false);
+        FarPtr AllocateVariable(string name, ushort size, bool declarePointer = false);
 
         /// <summary>
         ///     Allocates the specific number of Big Memory Blocks with the desired size
@@ -55,7 +55,7 @@ namespace MBBSEmu.Memory
         /// <param name="quantity"></param>
         /// <param name="size"></param>
         /// <returns></returns>
-        IntPtr16 AllocateBigMemoryBlock(ushort quantity, ushort size);
+        FarPtr AllocateBigMemoryBlock(ushort quantity, ushort size);
 
         /// <summary>
         ///     Returns the specified block by index in the desired memory block
@@ -63,7 +63,7 @@ namespace MBBSEmu.Memory
         /// <param name="block"></param>
         /// <param name="index"></param>
         /// <returns></returns>
-        IntPtr16 GetBigMemoryBlock(IntPtr16 block, ushort index);
+        FarPtr GetBigMemoryBlock(FarPtr block, ushort index);
 
         //*** Segment Management ***
 
@@ -121,7 +121,7 @@ namespace MBBSEmu.Memory
         /// </summary>
         /// <param name="pointer"></param>
         /// <returns></returns>
-        byte GetByte(IntPtr16 pointer);
+        byte GetByte(FarPtr pointer);
 
         /// <summary>
         ///     Returns a single byte from the specified segment:offset
@@ -136,7 +136,7 @@ namespace MBBSEmu.Memory
         /// </summary>
         /// <param name="pointer"></param>
         /// <returns></returns>
-        ushort GetWord(IntPtr16 pointer);
+        ushort GetWord(FarPtr pointer);
 
         /// <summary>
         ///     Returns an unsigned word from the specified segment:offset
@@ -147,18 +147,40 @@ namespace MBBSEmu.Memory
         ushort GetWord(ushort segment, ushort offset);
 
         /// <summary>
-        ///     Returns an unsigned byte from the specified defined variable
+        ///     Returns an unsigned word from the specified defined variable
         /// </summary>
         /// <param name="variableName"></param>
         /// <returns></returns>
         ushort GetWord(string variableName);
 
         /// <summary>
+        ///     Returns an unsigned double word from the specified defined variable
+        /// </summary>
+        /// <param name="variableName"></param>
+        /// <returns></returns>
+        uint GetDWord(string variableName);
+
+        /// <summary>
+        ///     Returns an unsigned double word from the specified pointer
+        /// </summary>
+        /// <param name="pointer"></param>
+        /// <returns></returns>
+        uint GetDWord(FarPtr pointer);
+
+        /// <summary>
+        ///     Returns an unsigned double word from the specified segment:offset
+        /// </summary>
+        /// <param name="segment"></param>
+        /// <param name="offset"></param>
+        /// <returns></returns>
+        uint GetDWord(ushort segment, ushort offset);
+
+        /// <summary>
         ///     Returns a pointer stored at the specified pointer
         /// </summary>
         /// <param name="pointer"></param>
         /// <returns></returns>
-        IntPtr16 GetPointer(IntPtr16 pointer);
+        FarPtr GetPointer(FarPtr pointer);
 
         /// <summary>
         ///     Returns a pointer stored at the specified segment:offset
@@ -166,14 +188,14 @@ namespace MBBSEmu.Memory
         /// <param name="segment"></param>
         /// <param name="offset"></param>
         /// <returns></returns>
-        IntPtr16 GetPointer(ushort segment, ushort offset);
+        FarPtr GetPointer(ushort segment, ushort offset);
 
         /// <summary>
         ///     Returns a pointer stored at the specified defined variable
         /// </summary>
         /// <param name="variableName"></param>
         /// <returns></returns>
-        IntPtr16 GetPointer(string variableName);
+        FarPtr GetPointer(string variableName);
 
         /// <summary>
         ///     Returns an array with desired count from the specified pointer
@@ -181,7 +203,7 @@ namespace MBBSEmu.Memory
         /// <param name="pointer"></param>
         /// <param name="count"></param>
         /// <returns></returns>
-        ReadOnlySpan<byte> GetArray(IntPtr16 pointer, ushort count);
+        ReadOnlySpan<byte> GetArray(FarPtr pointer, ushort count);
 
         /// <summary>
         ///     Returns an array with the desired count from the specified segment:offset
@@ -206,7 +228,7 @@ namespace MBBSEmu.Memory
         /// <param name="pointer"></param>
         /// <param name="stripNull"></param>
         /// <returns></returns>
-        ReadOnlySpan<byte> GetString(IntPtr16 pointer, bool stripNull = false);
+        ReadOnlySpan<byte> GetString(FarPtr pointer, bool stripNull = false);
 
         /// <summary>
         ///     Returns an array containing the cstring stored at the specified segment:offset
@@ -232,7 +254,7 @@ namespace MBBSEmu.Memory
         /// </summary>
         /// <param name="pointer"></param>
         /// <param name="value"></param>
-        void SetByte(IntPtr16 pointer, byte value);
+        void SetByte(FarPtr pointer, byte value);
 
         /// <summary>
         ///     Sets the specified byte at the desired segment:offset
@@ -254,7 +276,7 @@ namespace MBBSEmu.Memory
         /// </summary>
         /// <param name="pointer"></param>
         /// <param name="value"></param>
-        void SetWord(IntPtr16 pointer, ushort value);
+        void SetWord(FarPtr pointer, ushort value);
 
         /// <summary>
         ///     Sets the specified word at the desired segment:offset
@@ -272,11 +294,33 @@ namespace MBBSEmu.Memory
         void SetWord(string variableName, ushort value);
 
         /// <summary>
+        ///     Sets the specified double word at the desired pointer
+        /// </summary>
+        /// <param name="pointer"></param>
+        /// <param name="value"></param>
+        void SetDWord(FarPtr pointer, uint value);
+
+        /// <summary>
+        ///     Sets the specified double word at the desired segment:offset
+        /// </summary>
+        /// <param name="segment"></param>
+        /// <param name="offset"></param>
+        /// <param name="value"></param>
+        void SetDWord(ushort segment, ushort offset, uint value);
+
+        /// <summary>
+        ///     Sets the specified double word at the defined variable
+        /// </summary>
+        /// <param name="variableName"></param>
+        /// <param name="value"></param>
+        void SetDWord(string variableName, uint value);
+
+        /// <summary>
         ///     Sets the specified array at the desired pointer
         /// </summary>
         /// <param name="pointer"></param>
         /// <param name="array"></param>
-        void SetArray(IntPtr16 pointer, ReadOnlySpan<byte> array);
+        void SetArray(FarPtr pointer, ReadOnlySpan<byte> array);
 
         /// <summary>
         ///     Sets the specified array at the desired segment:offset
@@ -308,21 +352,29 @@ namespace MBBSEmu.Memory
         /// <param name="pointer"></param>
         /// <param name="count"></param>
         /// <param name="value"></param>
-        void FillArray(IntPtr16 pointer, ushort count, byte value);
+        void FillArray(FarPtr pointer, ushort count, byte value);
+
+        /// <summary>
+        ///     Writes the specified byte the specified number of times starting at the specified variable
+        /// </summary>
+        /// <param name="variableName"></param>
+        /// <param name="count"></param>
+        /// <param name="value"></param>
+        void FillArray(string variableName, ushort count, byte value);
 
         /// <summary>
         ///     Sets the specified pointer value at the desired pointer
         /// </summary>
         /// <param name="pointer"></param>
         /// <param name="value"></param>
-        void SetPointer(IntPtr16 pointer, IntPtr16 value);
+        void SetPointer(FarPtr pointer, FarPtr value);
 
         /// <summary>
         ///     Sets the specified pointer value at the defined variable
         /// </summary>
         /// <param name="variableName"></param>
         /// <param name="value"></param>
-        void SetPointer(string variableName, IntPtr16 value);
+        void SetPointer(string variableName, FarPtr value);
 
         /// <summary>
         ///     Sets the specified pointer value at the desired segment:offset
@@ -330,14 +382,14 @@ namespace MBBSEmu.Memory
         /// <param name="segment"></param>
         /// <param name="offset"></param>
         /// <param name="value"></param>
-        void SetPointer(ushort segment, ushort offset, IntPtr16 value);
+        void SetPointer(ushort segment, ushort offset, FarPtr value);
 
         /// <summary>
         ///     Zeroes out the memory at the specified pointer for the desired number of bytes
         /// </summary>
         /// <param name="pointer"></param>
         /// <param name="length"></param>
-        void SetZero(IntPtr16 pointer, int length);
+        void SetZero(FarPtr pointer, int length);
 
         /// <summary>
         ///     Deletes all defined Segments from Memory
@@ -348,7 +400,7 @@ namespace MBBSEmu.Memory
         ///     Returns a newly allocated Segment in "Real Mode" memory
         /// </summary>
         /// <returns></returns>
-        IntPtr16 AllocateRealModeSegment(ushort segmentSize = ushort.MaxValue);
+        FarPtr AllocateRealModeSegment(ushort segmentSize = ushort.MaxValue);
 
     }
 }

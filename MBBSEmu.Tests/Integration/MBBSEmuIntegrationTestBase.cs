@@ -1,29 +1,31 @@
+using MBBSEmu.Database.Repositories.Account;
+using MBBSEmu.Database.Repositories.AccountKey;
+using MBBSEmu.Database.Session;
 using MBBSEmu.DependencyInjection;
 using MBBSEmu.HostProcess;
 using MBBSEmu.Module;
 using MBBSEmu.Resources;
 using MBBSEmu.Session;
+using MBBSEmu.TextVariables;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using MBBSEmu.Database.Session;
-using MBBSEmu.Database.Repositories.Account;
-using MBBSEmu.Database.Repositories.AccountKey;
 
 namespace MBBSEmu.Tests.Integration
 {
-    public class MBBSEmuIntegrationTestBase : IDisposable
+    public class MBBSEmuIntegrationTestBase : TestBase, IDisposable
     {
-        private static readonly Random RANDOM = new Random(Guid.NewGuid().GetHashCode());
         private readonly string[] _moduleFiles = { "MBBSEMU.DAT", "MBBSEMU.DLL", "MBBSEMU.MCV", "MBBSEMU.MDF", "MBBSEMU.MSG" };
 
-        protected readonly string _modulePath = Path.Join(Path.GetTempPath(), $"mbbsemu{RANDOM.Next()}");
+        protected readonly string _modulePath;
         protected TestSession _session;
 
         private protected readonly ServiceResolver _serviceResolver;
 
         public MBBSEmuIntegrationTestBase()
         {
+            _modulePath = GetModulePath();
+
             _serviceResolver = new ServiceResolver(SessionBuilder.ForTest($"MBBSDb_{RANDOM.Next()}"));
 
             _serviceResolver.GetService<IAccountRepository>().Reset("sysop");
@@ -77,6 +79,7 @@ namespace MBBSEmu.Tests.Integration
 
             //Setup and Run Host with only the MBBSEMU module
             var host = _serviceResolver.GetService<IMbbsHost>();
+            var textVariableService = _serviceResolver.GetService<ITextVariableService>();
             var moduleConfigurations = new List<ModuleConfiguration>
             {
                 new ModuleConfiguration {ModuleIdentifier = "MBBSEMU", ModulePath = _modulePath, MenuOptionKey = "A"}
@@ -84,7 +87,7 @@ namespace MBBSEmu.Tests.Integration
 
             host.Start(moduleConfigurations);
 
-            _session = new TestSession(host);
+            _session = new TestSession(host, textVariableService);
             host.AddSession(_session);
 
             testLogic(_session, host);

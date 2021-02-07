@@ -1,5 +1,6 @@
 using MBBSEmu.Database.Repositories.Account;
 using MBBSEmu.Database.Repositories.AccountKey;
+using MBBSEmu.Date;
 using MBBSEmu.Disassembler.Artifacts;
 using MBBSEmu.Extensions;
 using MBBSEmu.HostProcess.ExportedModules;
@@ -20,6 +21,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
+using MBBSEmu.TextVariables;
 
 namespace MBBSEmu.HostProcess
 {
@@ -34,7 +36,8 @@ namespace MBBSEmu.HostProcess
     /// </summary>
     public class MbbsHost : IMbbsHost
     {
-        public ILogger Logger { get; set; }
+        public ILogger Logger { get; init; }
+        public IClock Clock { get; init; }
 
         /// <summary>
         ///     Dictionary containing all active Channels
@@ -90,6 +93,12 @@ namespace MBBSEmu.HostProcess
         ///     Timer that triggers when nightly cleanup should occur
         /// </summary>
         private readonly Timer _timer;
+        /// <summary>
+        ///     Timer that sets _timerEvent on a set interval, controlled by Timer.Hertz
+        /// </summary>
+        private readonly Timer _tickTimer;
+        private EventWaitHandle _timerEvent;
+
 
         /// <summary>
         ///     Flag that controls whether the main loop will perform a nightly cleanup
@@ -106,9 +115,10 @@ namespace MBBSEmu.HostProcess
         private readonly IAccountKeyRepository _accountKeyRepository;
         private readonly IAccountRepository _accountRepository;
 
-        public MbbsHost(ILogger logger, IGlobalCache globalCache, IFileUtility fileUtility, IEnumerable<IHostRoutine> mbbsRoutines, AppSettings configuration, IEnumerable<IGlobalRoutine> globalRoutines, IAccountKeyRepository accountKeyRepository, IAccountRepository accountRepository, PointerDictionary<SessionBase> channelDictionary)
+        public MbbsHost(IClock clock, ILogger logger, IGlobalCache globalCache, IFileUtility fileUtility, IEnumerable<IHostRoutine> mbbsRoutines, AppSettings configuration, IEnumerable<IGlobalRoutine> globalRoutines, IAccountKeyRepository accountKeyRepository, IAccountRepository accountRepository, PointerDictionary<SessionBase> channelDictionary, ITextVariableService textVariableService)
         {
             Logger = logger;
+            Clock = clock;
             _globalCache = globalCache;
             _fileUtility = fileUtility;
             _mbbsRoutines = mbbsRoutines;
@@ -117,6 +127,7 @@ namespace MBBSEmu.HostProcess
             _channelDictionary = channelDictionary;
             _accountKeyRepository = accountKeyRepository;
             _accountRepository = accountRepository;
+            var textVariableServiceLocal = textVariableService;
 
             Logger.Info("Constructing MBBSEmu Host...");
 
@@ -125,7 +136,26 @@ namespace MBBSEmu.HostProcess
             _realTimeStopwatch = Stopwatch.StartNew();
             _incomingSessions = new Queue<SessionBase>();
             _cleanupTime = _configuration.CleanupTime;
-            _timer = new Timer(unused => _performCleanup = true, this, NowUntil(_cleanupTime), TimeSpan.FromDays(1));
+            _timer = new Timer(_ => _performCleanup = true, this, NowUntil(_cleanupTime), TimeSpan.FromDays(1));
+
+            if (_configuration.TimerHertz > 0)
+            {
+                _timerEvent = new AutoResetEvent(true);
+                _tickTimer = new Timer(_ => _timerEvent.Set(), this, TimeSpan.Zero, TimeSpan.FromMilliseconds(1000 / configuration.TimerHertz));
+            }
+
+            //Setup Text Variables
+            textVariableServiceLocal.SetVariable("SYSTEM_NAME", () => _configuration.BBSTitle);
+            textVariableServiceLocal.SetVariable("SYSTEM_COMPANY", () => _configuration.BBSCompanyName);
+            textVariableServiceLocal.SetVariable("SYSTEM_ADDRESS1", () => _configuration.BBSAddress1);
+            textVariableServiceLocal.SetVariable("SYSTEM_ADDRESS2", () => _configuration.BBSAddress2);
+            textVariableServiceLocal.SetVariable("SYSTEM_PHONE", () => _configuration.BBSDataPhone);
+            textVariableServiceLocal.SetVariable("NUMBER_OF_LINES", () => _configuration.BBSChannels.ToString());
+            textVariableServiceLocal.SetVariable("DATE", () => Clock.Now.ToString("M/d/yy"));
+            textVariableServiceLocal.SetVariable("TIME", () => Clock.Now.ToString("t"));
+            textVariableServiceLocal.SetVariable("TOTAL_ACCOUNTS", () => _accountRepository.GetAccounts().Count().ToString());
+            textVariableServiceLocal.SetVariable("OTHERS_ONLINE", () => (GetUserSessions().Count - 1).ToString());
+
             Logger.Info("Constructed MBBSEmu Host!");
         }
 
@@ -136,10 +166,10 @@ namespace MBBSEmu.HostProcess
         {
             //Load Modules
             foreach (var m in moduleConfigurations)
-                AddModule(new MbbsModule(_fileUtility, Logger, m.ModuleIdentifier, m.ModulePath) { MenuOptionKey = m.MenuOptionKey });
+                AddModule(new MbbsModule(_fileUtility, Clock, Logger, m.ModuleIdentifier, m.ModulePath) { MenuOptionKey = m.MenuOptionKey });
 
             //Remove any modules that did not properly initialize
-            foreach (var (_, value) in _modules.Where(m => m.Value.EntryPoints.Count == 1))
+            foreach (var (_, value) in _modules.Where(m => m.Value.MainModuleDll.EntryPoints.Count == 1))
             {
                 Logger.Error($"{value.ModuleIdentifier} not properly initialized, Removing");
                 moduleConfigurations.RemoveAll(x => x.ModuleIdentifier == value.ModuleIdentifier);
@@ -167,6 +197,10 @@ namespace MBBSEmu.HostProcess
         {
             _isRunning = false;
             _timer.Dispose();
+            _tickTimer?.Dispose();
+            // this set must come after _isRunning is set to false, to trigger the exit of the
+            // worker thread.
+            _timerEvent?.Set();
         }
 
         public void ScheduleNightlyShutdown(EventWaitHandle eventWaitHandle)
@@ -180,6 +214,17 @@ namespace MBBSEmu.HostProcess
             _workerThread.Join();
         }
 
+        private void WaitForNextTick()
+        {
+            if (_timerEvent == null ||
+                _channelDictionary.Values.Any(session => session.DataFromClient.Count > 0 || session.DataToClient.Count > 0 || session.DataToProcess))
+                return;
+
+            _timerEvent.WaitOne();
+        }
+
+        public void TriggerProcessing() => _timerEvent?.Set();
+
         /// <summary>
         ///     This is the main MajorBBS/Worldgroup loop similar to how it actually functions with the software itself.
         ///
@@ -190,6 +235,8 @@ namespace MBBSEmu.HostProcess
         {
             while (_isRunning)
             {
+                WaitForNextTick();
+
                 ProcessNightlyCleanup();
 
                 //Handle Channels
@@ -296,7 +343,7 @@ namespace MBBSEmu.HostProcess
                                     ProcessPollingRoutine(session);
 
                                     //Keep the user in Polling Status if the polling routine is still there
-                                    if (session.PollingRoutine != IntPtr16.Empty)
+                                    if (session.PollingRoutine != FarPtr.Empty)
                                         session.Status = 192;
                                 }
 
@@ -357,7 +404,7 @@ namespace MBBSEmu.HostProcess
         {
             foreach (var m in _modules.Values)
             {
-                if (!m.EntryPoints.TryGetValue(routine, out var routineEntryPoint)) continue;
+                if (!m.MainModuleDll.EntryPoints.TryGetValue(routine, out var routineEntryPoint)) continue;
 
                 if (routineEntryPoint.Segment != 0 &&
                     routineEntryPoint.Offset != 0)
@@ -430,7 +477,7 @@ namespace MBBSEmu.HostProcess
             session.StatusChange = false;
             session.Status = 3;
             session.SessionState = EnumSessionState.InModule;
-            session.UsrPtr.State = session.CurrentModule.StateCode;
+            session.UsrPtr.State = session.CurrentModule.MainModuleDll.StateCode;
             ProcessSTTROU(session);
         }
 
@@ -449,7 +496,7 @@ namespace MBBSEmu.HostProcess
             session.InputBuffer.SetLength(0);
 
             var result = Run(session.CurrentModule.ModuleIdentifier,
-                session.CurrentModule.EntryPoints["sttrou"], session.Channel);
+                session.CurrentModule.MainModuleDll.EntryPoints["sttrou"], session.Channel);
 
             //Finally, display prompt character if one is set
             if (session.PromptCharacter > 0)
@@ -469,6 +516,9 @@ namespace MBBSEmu.HostProcess
         /// <param name="session"></param>
         private void ExitModule(SessionBase session)
         {
+            //Clear VDA
+            Array.Clear(session.VDA,0, Majorbbs.VOLATILE_DATA_SIZE);
+
             session.SessionState = EnumSessionState.MainMenuDisplay;
             session.CurrentModule = null;
             session.CharacterInterceptor = null;
@@ -502,9 +552,9 @@ namespace MBBSEmu.HostProcess
         {
             session.OutputEnabled = false; // always disabled for RLogin
 
-            var entryPoint = session.CurrentModule.EntryPoints["lonrou"];
+            var entryPoint = session.CurrentModule.MainModuleDll.EntryPoints["lonrou"];
 
-            if (entryPoint != IntPtr16.Empty)
+            if (entryPoint != FarPtr.Empty)
                 Run(session.CurrentModule.ModuleIdentifier, entryPoint, session.Channel);
 
             session.SessionState = EnumSessionState.EnteringModule;
@@ -565,9 +615,11 @@ namespace MBBSEmu.HostProcess
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void ProcessBTUCHI(SessionBase session)
         {
+            var channelInputBufferSizeBefore = session.InputBuffer.Length;
+
             //Create Parameters for BTUCHI Routine
             var initialStackValues = new Queue<ushort>(2);
-            initialStackValues.Enqueue(session.LastCharacterReceived);
+            initialStackValues.Enqueue(session.CharacterReceived);
             initialStackValues.Enqueue(session.Channel);
 
             var result = Run(session.CurrentModule.ModuleIdentifier,
@@ -579,7 +631,10 @@ namespace MBBSEmu.HostProcess
             //would clear out AH before assigning AL
             result &= 0xFF;
 
-            session.LastCharacterReceived = (byte)result;
+            session.CharacterProcessed = (byte)result;
+
+            if (session.CharacterProcessed == 0xD)
+                session.Status = 3;
         }
 
         /// <summary>
@@ -594,7 +649,7 @@ namespace MBBSEmu.HostProcess
         private void ProcessSTSROU(SessionBase session)
         {
             session.StatusChange = false;
-            Run(session.CurrentModule.ModuleIdentifier, session.CurrentModule.EntryPoints["stsrou"],
+            Run(session.CurrentModule.ModuleIdentifier, session.CurrentModule.MainModuleDll.EntryPoints["stsrou"],
                 session.Channel);
         }
 
@@ -627,16 +682,15 @@ namespace MBBSEmu.HostProcess
 
                 foreach (var (key, value) in module.RtkickRoutines.ToList())
                 {
-                    if (!value.Executed && value.Elapsed.ElapsedMilliseconds > (value.Delay * 1000))
+                    if (!value.Executed && value.Elapsed.ElapsedMilliseconds > value.Delay * 1000)
                     {
 #if DEBUG
-                        Logger.Info($"Running RTKICK-{key}: {module.EntryPoints[$"RTKICK-{key}"]}");
+                        Logger.Info($"Running RTKICK-{key}: {value}");
 #endif
-                        Run(module.ModuleIdentifier, module.EntryPoints[$"RTKICK-{key}"], ushort.MaxValue);
+                        Run(module.ModuleIdentifier, value, ushort.MaxValue);
 
                         value.Elapsed.Stop();
                         value.Executed = true;
-                        module.EntryPoints.Remove($"RTKICK-{key}");
                         module.RtkickRoutines.Remove(key);
                     }
                 }
@@ -665,7 +719,7 @@ namespace MBBSEmu.HostProcess
 
                 foreach (var r in m.RtihdlrRoutines)
                 {
-                    Run(m.ModuleIdentifier, m.EntryPoints[$"RTIHDLR-{r.Key}"], ushort.MaxValue);
+                    Run(m.ModuleIdentifier, r.Value, ushort.MaxValue);
                 }
             }
 
@@ -680,7 +734,7 @@ namespace MBBSEmu.HostProcess
             foreach (var m in _modules.Values)
             {
                 var syscycPointer = m.Memory.GetPointer(m.Memory.GetVariablePointer("SYSCYC"));
-                if (syscycPointer == IntPtr16.Empty) continue;
+                if (syscycPointer == FarPtr.Empty) continue;
 
                 Run(m.ModuleIdentifier, syscycPointer, ushort.MaxValue);
             }
@@ -705,7 +759,7 @@ namespace MBBSEmu.HostProcess
                     //Create Parameters for BTUCHI Routine
                     var initialStackValues = new Queue<ushort>(1);
                     initialStackValues.Enqueue((ushort)r.Key);
-                    Run(m.ModuleIdentifier, m.EntryPoints[$"TASK-{r.Key}"], ushort.MaxValue, false, initialStackValues);
+                    Run(m.ModuleIdentifier, r.Value, ushort.MaxValue, false, initialStackValues);
                 }
             }
         }
@@ -745,7 +799,7 @@ namespace MBBSEmu.HostProcess
         private void ProcessIncomingCharacter(SessionBase session)
         {
             //Handling Incoming Characters
-            switch (session.LastCharacterReceived)
+            switch (session.CharacterReceived)
             {
                 //Backspace
                 case 127 when session.SessionState == EnumSessionState.InModule:
@@ -761,11 +815,19 @@ namespace MBBSEmu.HostProcess
 
                 //Enter or Return
                 case 0xD when !session.TransparentMode && session.SessionState != EnumSessionState.InFullScreenDisplay:
-                    {
-                        //Set Status == 3, which means there is a Command Ready
-                        session.SendToClient(new byte[] { 0xD, 0xA });
-                        session.Status = 3;
-                        session.EchoSecureEnabled = false;
+                {
+                        //If we're in transparent mode or BTUCHI has changed the character to null, don't echo
+                        if (!session.TransparentMode && session.CharacterProcessed > 0)
+                            session.SendToClient(new byte[] {0xD, 0xA});
+
+                        //If BTUCHI Injected a deferred Execution Status, respect that vs. processing the input
+                        if (!session.StatusChange && session.Status != 240)
+                        {
+                            //Set Status == 3, which means there is a Command Ready
+                            session.Status = 3;
+                            session.EchoSecureEnabled = false;
+                        }
+
                         break;
                     }
 
@@ -778,16 +840,19 @@ namespace MBBSEmu.HostProcess
                         if (session.EchoSecureEnabled && session.InputBuffer.Length >= session.ExtUsrAcc.wid)
                             break;
 
-                        session.InputBuffer.WriteByte(session.LastCharacterReceived);
-
-                        //If the client is in transparent mode, don't echo
-                        if (!session.TransparentMode &&
-                            (session.Status == 0 || session.Status == 1 || session.Status == 192))
+                        if (session.CharacterProcessed > 0)
                         {
-                            //Check for Secure Echo being Enabled
-                            session.SendToClient(session.EchoSecureEnabled
-                                ? new[] {session.ExtUsrAcc.ech}
-                                : new[] {session.LastCharacterReceived});
+                            session.InputBuffer.WriteByte(session.CharacterProcessed);
+
+                            //If the client is in transparent mode, don't echo
+                            if (!session.TransparentMode &&
+                                (session.Status == 0 || session.Status == 1 || session.Status == 192))
+                            {
+                                //Check for Secure Echo being Enabled
+                                session.SendToClient(session.EchoSecureEnabled
+                                    ? new[] {session.ExtUsrAcc.ech}
+                                    : new[] {session.CharacterReceived});
+                            }
                         }
 
                         break;
@@ -806,17 +871,7 @@ namespace MBBSEmu.HostProcess
         /// <param name="module"></param>
         public void AddModule(MbbsModule module)
         {
-            Logger.Info($"Adding Module {module.ModuleIdentifier}...");
-
-            //Patch Relocation Information to Bytecode
-            PatchRelocation(module);
-
-            //Run Segments through AOT Decompiler & add them to Memory
-            foreach (var seg in module.File.SegmentTable)
-            {
-                module.Memory.AddSegment(seg);
-                Logger.Info($"Segment {seg.Ordinal} ({seg.Data.Length} bytes) loaded!");
-            }
+            Logger.Info($"({module.ModuleIdentifier}) Adding Module...");
 
             //Setup Exported Modules
             module.ExportedModuleDictionary.Add(Majorbbs.Segment, GetFunctions(module, "MAJORBBS"));
@@ -824,15 +879,40 @@ namespace MBBSEmu.HostProcess
             module.ExportedModuleDictionary.Add(Phapi.Segment, GetFunctions(module, "PHAPI"));
             module.ExportedModuleDictionary.Add(Galme.Segment, GetFunctions(module, "GALME"));
             module.ExportedModuleDictionary.Add(Doscalls.Segment, GetFunctions(module, "DOSCALLS"));
+            module.ExportedModuleDictionary.Add(Galmsg.Segment, GetFunctions(module, "GALMSG"));
 
-            //Add it to the Module Dictionary
-            module.StateCode = (short)_modules.Count;
-            _modules[module.ModuleIdentifier] = module;
+            //Patch Relocation Information to Bytecode
+            PatchRelocation(module);
+
+            //Run Segments through AOT Decompiler & add them to Memory
+            for (var i = 0; i < module.ModuleDlls.Count; i++)
+            {
+                var dll = module.ModuleDlls[i];
+
+                //Only add the main module to the Modules List
+                if (i == 0)
+                    _modules[module.ModuleIdentifier] = module;
+
+                foreach (var seg in dll.File.SegmentTable)
+                {
+                    seg.Ordinal += dll.SegmentOffset;
+                    module.Memory.AddSegment(seg);
+                    Logger.Debug($"({module.ModuleIdentifier}) Segment {seg.Ordinal} ({seg.Data.Length} bytes) loaded!");
+                }
+
+                dll.StateCode = (short) (_modules.Count * 10 + i);
+            }
 
             //Run INIT
-            Run(module.ModuleIdentifier, module.EntryPoints["_INIT_"], ushort.MaxValue);
+            foreach (var dll in module.ModuleDlls.OrderBy(m => m.File.FileName))
+            {
+                if (!dll.EntryPoints.TryGetValue("_INIT_", out var entryPointer))
+                    continue;
 
-            Logger.Info($"Module {module.ModuleIdentifier} added!");
+                Run(module.ModuleIdentifier, entryPointer, ushort.MaxValue);
+            }
+
+            Logger.Info($"({module.ModuleIdentifier}) Module Added!");
         }
 
         /// <summary>
@@ -885,7 +965,7 @@ namespace MBBSEmu.HostProcess
         /// <param name="channelNumber"></param>
         /// <param name="simulateCallFar"></param>
         /// <param name="initialStackValues"></param>
-        private ushort Run(string moduleName, IntPtr16 routine, ushort channelNumber, bool simulateCallFar = false, Queue<ushort> initialStackValues = null)
+        private ushort Run(string moduleName, FarPtr routine, ushort channelNumber, bool simulateCallFar = false, Queue<ushort> initialStackValues = null)
         {
             var resultRegisters = _modules[moduleName].Execute(routine, channelNumber, simulateCallFar, false, initialStackValues);
             return resultRegisters.AX;
@@ -908,12 +988,12 @@ namespace MBBSEmu.HostProcess
             {
                 _exportedFunctions[key] = exportedModule switch
                 {
-                    "MAJORBBS" => new Majorbbs(Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary, _accountKeyRepository, _accountRepository),
-                    "GALGSBL" => new Galgsbl(Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary),
-                    "DOSCALLS" => new Doscalls(Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary),
-                    "GALME" => new Galme(Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary),
-                    "PHAPI" => new Phapi(Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary),
-                    "GALMSG" => new Galmsg(Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary),
+                    "MAJORBBS" => new Majorbbs(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary, _accountKeyRepository, _accountRepository),
+                    "GALGSBL" => new Galgsbl(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary),
+                    "DOSCALLS" => new Doscalls(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary),
+                    "GALME" => new Galme(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary),
+                    "PHAPI" => new Phapi(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary),
+                    "GALMSG" => new Galmsg(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary),
                     _ => throw new Exception($"Unknown Exported Library: {exportedModule}")
                 };
 
@@ -945,132 +1025,161 @@ namespace MBBSEmu.HostProcess
         /// <param name="module"></param>
         private void PatchRelocation(MbbsModule module)
         {
-            //Declare Host Functions
-            var majorbbsHostFunctions = GetFunctions(module, "MAJORBBS");
-            var galsblHostFunctions = GetFunctions(module, "GALGSBL");
-            var doscallsHostFunctions = GetFunctions(module, "DOSCALLS");
-            var galmeFunctions = GetFunctions(module, "GALME");
-            var phapiFunctions = GetFunctions(module, "PHAPI");
-            var galmsgFunctions = GetFunctions(module, "GALMSG");
 
-            foreach (var s in module.File.SegmentTable)
+            foreach (var dll in module.ModuleDlls)
             {
-                if (s.RelocationRecords == null || s.RelocationRecords.Count == 0)
-                    continue;
-
-                foreach (var relocationRecord in s.RelocationRecords.Values)
+                //Patch Segment 0 (PHAPI) to just RETF (0xCB)
+                dll.File.SegmentTable[0].Data[0] = 0xCB;
+                
+                foreach (var s in dll.File.SegmentTable)
                 {
-                    //Ignored Relocation Record
-                    if (relocationRecord.TargetTypeValueTuple == null)
+                    if (s.RelocationRecords == null || s.RelocationRecords.Count == 0)
                         continue;
 
-                    switch (relocationRecord.TargetTypeValueTuple.Item1)
+                    foreach (var relocationRecord in s.RelocationRecords.Values)
                     {
-                        case EnumRecordsFlag.ImportOrdinalAdditive:
-                        case EnumRecordsFlag.ImportOrdinal:
-                            {
-                                var nametableOrdinal = relocationRecord.TargetTypeValueTuple.Item2;
-                                var functionOrdinal = relocationRecord.TargetTypeValueTuple.Item3;
+                        //Ignored Relocation Record
+                        if (relocationRecord.TargetTypeValueTuple == null)
+                            continue;
 
-                                var relocationResult = module.File.ImportedNameTable[nametableOrdinal].Name switch
+                        switch (relocationRecord.TargetTypeValueTuple.Item1)
+                        {
+                            case EnumRecordsFlag.ImportOrdinalAdditive:
+                            case EnumRecordsFlag.ImportOrdinal:
                                 {
-                                    "MAJORBBS" => majorbbsHostFunctions.Invoke(functionOrdinal, true),
-                                    "GALGSBL" => galsblHostFunctions.Invoke(functionOrdinal, true),
-                                    "DOSCALLS" => doscallsHostFunctions.Invoke(functionOrdinal, true),
-                                    "GALME" => galmeFunctions.Invoke(functionOrdinal, true),
-                                    "PHAPI" => phapiFunctions.Invoke(functionOrdinal, true),
-                                    "GALMSG" => galmsgFunctions.Invoke(functionOrdinal, true),
-                                    _ => throw new Exception(
-                                        $"Unknown or Unimplemented Imported Library: {module.File.ImportedNameTable[nametableOrdinal].Name}")
-                                };
+                                    var nametableOrdinal = relocationRecord.TargetTypeValueTuple.Item2;
+                                    var functionOrdinal = relocationRecord.TargetTypeValueTuple.Item3;
 
-                                var relocationPointer = new IntPtr16(relocationResult);
+                                    var relocationPointer = FarPtr.Empty;
+                                    switch (dll.File.ImportedNameTable[nametableOrdinal].Name)
+                                    {
+                                        case "MAJORBBS":
+                                            relocationPointer = new FarPtr(module.ExportedModuleDictionary[Majorbbs.Segment].Invoke(functionOrdinal, true));
+                                            break;
+                                        case "GALGSBL":
+                                            relocationPointer = new FarPtr(module.ExportedModuleDictionary[Galgsbl.Segment].Invoke(functionOrdinal, true));
+                                            break;
+                                        case "DOSCALLS":
+                                            relocationPointer = new FarPtr(module.ExportedModuleDictionary[Doscalls.Segment].Invoke(functionOrdinal, true));
+                                            break;
+                                        case "GALME":
+                                            relocationPointer = new FarPtr(module.ExportedModuleDictionary[Galme.Segment].Invoke(functionOrdinal, true));
+                                            break;
+                                        case "PHAPI":
+                                            relocationPointer = new FarPtr(module.ExportedModuleDictionary[Phapi.Segment].Invoke(functionOrdinal, true));
+                                            break;
+                                        case "GALMSG":
+                                            relocationPointer = new FarPtr(module.ExportedModuleDictionary[Galmsg.Segment].Invoke(functionOrdinal, true));
+                                            break;
+                                        case var importedName
+                                            when module.ModuleDlls.Any(m =>
+                                                m.File.FileName.Split('.')[0].ToUpper() == importedName):
+                                            {
+                                                //Find the Imported DLL in the List of Required
+                                                var importedDll = module.ModuleDlls.First(m =>
+                                                    m.File.FileName.Split('.')[0].ToUpper() == importedName);
 
-                                //32-Bit Pointer
-                                if (relocationRecord.SourceType == 3)
-                                {
-                                    Array.Copy(relocationPointer.Data, 0, s.Data, relocationRecord.Offset, 4);
-                                    continue;
+                                                //Get The Entry Point based on the Ordinal
+                                                var initEntryPoint =
+                                                    importedDll.File.EntryTable.First(x => x.Ordinal == functionOrdinal);
+                                                relocationPointer = new FarPtr((ushort)(initEntryPoint.SegmentNumber + importedDll.SegmentOffset),
+                                                    initEntryPoint.Offset);
+                                                break;
+                                            }
+                                        default:
+                                            Logger.Error($"({module.ModuleIdentifier}) Unknown or Unimplemented Imported Library: {dll.File.ImportedNameTable[nametableOrdinal].Name}");
+                                            continue;
+                                            //throw new Exception(
+                                            //    $"Unknown or Unimplemented Imported Library: {dll.File.ImportedNameTable[nametableOrdinal].Name}");
+                                    }
+
+                                    //32-Bit Pointer
+                                    if (relocationRecord.SourceType == 3)
+                                    {
+                                        Array.Copy(relocationPointer.Data, 0, s.Data, relocationRecord.Offset, 4);
+                                        continue;
+                                    }
+
+                                    //16-Bit Values
+                                    var result = relocationRecord.SourceType switch
+                                    {
+                                        //Offset
+                                        2 => relocationPointer.Segment,
+                                        5 => relocationPointer.Offset,
+                                        _ => throw new ArgumentOutOfRangeException(
+                                            $"Unhandled Relocation Source Type: {relocationRecord.SourceType}")
+                                    };
+
+                                    if (relocationRecord.Flag.HasFlag(EnumRecordsFlag.ImportOrdinalAdditive))
+                                        result += BitConverter.ToUInt16(s.Data, relocationRecord.Offset);
+
+                                    Array.Copy(BitConverter.GetBytes(result), 0, s.Data, relocationRecord.Offset, 2);
+                                    break;
                                 }
-
-                                //16-Bit Values
-                                var result = relocationRecord.SourceType switch
+                            case EnumRecordsFlag.InternalRef when relocationRecord.SourceType == 3:
                                 {
-                                    //Offset
-                                    2 => relocationPointer.Segment,
-                                    5 => relocationPointer.Offset,
-                                    _ => throw new ArgumentOutOfRangeException(
-                                        $"Unhandled Relocation Source Type: {relocationRecord.SourceType}")
-                                };
-
-                                if (relocationRecord.Flag.HasFlag(EnumRecordsFlag.ImportOrdinalAdditive))
-                                    result += BitConverter.ToUInt16(s.Data, relocationRecord.Offset);
-
-                                Array.Copy(BitConverter.GetBytes(result), 0, s.Data, relocationRecord.Offset, 2);
-                                break;
-                            }
-                        case EnumRecordsFlag.InternalRef:
-                            {
-
-                                //32-Bit Pointer
-                                if (relocationRecord.SourceType == 3)
-                                {
-                                    var relocationPointer = new IntPtr16(relocationRecord.TargetTypeValueTuple.Item2,
+                                    var relocationPointer = new FarPtr(
+                                        (ushort)(relocationRecord.TargetTypeValueTuple.Item2 + dll.SegmentOffset),
                                         relocationRecord.TargetTypeValueTuple.Item4);
 
                                     Array.Copy(relocationPointer.Data, 0, s.Data, relocationRecord.Offset, 4);
                                     break;
                                 }
-                                Array.Copy(BitConverter.GetBytes(relocationRecord.TargetTypeValueTuple.Item2), 0, s.Data, relocationRecord.Offset, 2);
-                                break;
-                            }
-
-                        case EnumRecordsFlag.ImportNameAdditive:
-                        case EnumRecordsFlag.ImportName:
-                            {
-                                var nametableOrdinal = relocationRecord.TargetTypeValueTuple.Item2;
-                                var functionOrdinal = relocationRecord.TargetTypeValueTuple.Item3;
-
-                                var newSegment = module.File.ImportedNameTable[nametableOrdinal].Name switch
+                            case EnumRecordsFlag.InternalRef:
                                 {
-                                    "MAJORBBS" => Majorbbs.Segment,
-                                    "GALGSBL" => Galgsbl.Segment,
-                                    "PHAPI" => Phapi.Segment,
-                                    "GALME" => Galme.Segment,
-                                    "DOSCALLS" => Doscalls.Segment,
-                                    _ => throw new Exception(
-                                        $"Unknown or Unimplemented Imported Module: {module.File.ImportedNameTable[nametableOrdinal].Name}")
-
-                                };
-
-                                var relocationPointer = new IntPtr16(newSegment, functionOrdinal);
-
-                                //32-Bit Pointer
-                                if (relocationRecord.SourceType == 3)
-                                {
-                                    Array.Copy(relocationPointer.Data, 0, s.Data, relocationRecord.Offset, 4);
-                                    continue;
+                                    Array.Copy(
+                                        BitConverter.GetBytes(relocationRecord.TargetTypeValueTuple.Item2 +
+                                                              dll.SegmentOffset), 0,
+                                        s.Data, relocationRecord.Offset, 2);
+                                    break;
                                 }
-
-                                //16-Bit Values
-                                var result = relocationRecord.SourceType switch
+                            case EnumRecordsFlag.ImportNameAdditive:
+                            case EnumRecordsFlag.ImportName:
                                 {
-                                    //Offset
-                                    2 => relocationPointer.Segment,
-                                    5 => relocationPointer.Offset,
-                                    _ => throw new ArgumentOutOfRangeException(
-                                        $"Unhandled Relocation Source Type: {relocationRecord.SourceType}")
-                                };
+                                    var nametableOrdinal = relocationRecord.TargetTypeValueTuple.Item2;
+                                    var functionOrdinal = relocationRecord.TargetTypeValueTuple.Item3;
 
-                                if (relocationRecord.Flag.HasFlag(EnumRecordsFlag.ImportNameAdditive))
-                                    result += BitConverter.ToUInt16(s.Data, relocationRecord.Offset);
+                                    var newSegment = dll.File.ImportedNameTable[nametableOrdinal].Name switch
+                                    {
+                                        "MAJORBBS" => Majorbbs.Segment,
+                                        "GALGSBL" => Galgsbl.Segment,
+                                        "PHAPI" => Phapi.Segment,
+                                        "GALME" => Galme.Segment,
+                                        "DOSCALLS" => Doscalls.Segment,
+                                        _ => throw new Exception(
+                                            $"Unknown or Unimplemented Imported Module: {dll.File.ImportedNameTable[nametableOrdinal].Name}")
 
-                                Array.Copy(BitConverter.GetBytes(result), 0, s.Data, relocationRecord.Offset, 2);
-                                break;
+                                    };
 
-                            }
-                        default:
-                            throw new Exception("Unsupported Records Flag for Relocation Value");
+                                    var relocationPointer = new FarPtr(newSegment, functionOrdinal);
+
+                                    //32-Bit Pointer
+                                    if (relocationRecord.SourceType == 3)
+                                    {
+                                        Array.Copy(relocationPointer.Data, 0, s.Data, relocationRecord.Offset, 4);
+                                        continue;
+                                    }
+
+                                    //16-Bit Values
+                                    var result = relocationRecord.SourceType switch
+                                    {
+                                        //Offset
+                                        2 => relocationPointer.Segment,
+                                        5 => relocationPointer.Offset,
+                                        _ => throw new ArgumentOutOfRangeException(
+                                            $"Unhandled Relocation Source Type: {relocationRecord.SourceType}")
+                                    };
+
+                                    if (relocationRecord.Flag.HasFlag(EnumRecordsFlag.ImportNameAdditive))
+                                        result += BitConverter.ToUInt16(s.Data, relocationRecord.Offset);
+
+                                    Array.Copy(BitConverter.GetBytes(result), 0, s.Data, relocationRecord.Offset, 2);
+                                    break;
+
+                                }
+                            default:
+                                throw new Exception("Unsupported Records Flag for Relocation Value");
+                        }
                     }
                 }
             }
@@ -1113,7 +1222,10 @@ namespace MBBSEmu.HostProcess
             {
                 _modules.Remove(m.Value.ModuleIdentifier);
                 foreach (var e in _exportedFunctions.Keys.Where(x => x.StartsWith(m.Value.ModuleIdentifier)))
+                {
+                    _exportedFunctions[e].Dispose();
                     _exportedFunctions.Remove(e);
+                }
             }
 
             Logger.Info("NIGHTLY CLEANUP COMPLETE -- RESTARTING HOST");
@@ -1123,7 +1235,7 @@ namespace MBBSEmu.HostProcess
 
         private TimeSpan NowUntil(TimeSpan timeOfDay)
         {
-            var waitTime = _cleanupTime - DateTime.Now.TimeOfDay;
+            var waitTime = _cleanupTime - Clock.Now.TimeOfDay;
             if (waitTime < TimeSpan.Zero)
             {
                 waitTime += TimeSpan.FromDays(1);

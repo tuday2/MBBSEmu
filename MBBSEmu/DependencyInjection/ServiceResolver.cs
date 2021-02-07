@@ -1,6 +1,7 @@
 using MBBSEmu.Database.Repositories.Account;
 using MBBSEmu.Database.Repositories.AccountKey;
 using MBBSEmu.Database.Session;
+using MBBSEmu.Date;
 using MBBSEmu.HostProcess;
 using MBBSEmu.HostProcess.Fsd;
 using MBBSEmu.HostProcess.GlobalRoutines;
@@ -15,6 +16,7 @@ using Microsoft.Extensions.DependencyInjection;
 using NLog;
 using System.Collections.Generic;
 using System;
+using MBBSEmu.TextVariables;
 
 namespace MBBSEmu.DependencyInjection
 {
@@ -57,6 +59,7 @@ namespace MBBSEmu.DependencyInjection
             AddSingleton<IAccountKeyRepository, AccountKeyRepository>(overrides);
 
             //MajorBBS Host Objects
+            AddSingleton<ITextVariableService, TextVariableService>(overrides);
             AddSingleton<IHostRoutine, MenuRoutines>(overrides);
             AddSingleton<IHostRoutine, FsdRoutines>(overrides);
             AddSingleton<IGlobalRoutine, UsersOnlineGlobal>(overrides);
@@ -64,6 +67,9 @@ namespace MBBSEmu.DependencyInjection
             AddSingleton<IGlobalRoutine, SysopGlobal>(overrides);
             AddSingleton<IMbbsHost, MbbsHost>(overrides);
             _serviceCollection.AddTransient<ISocketServer, SocketServer>();
+
+            //System clock
+            AddSingleton<IClock, SystemClock>(overrides);
 
             _provider = _serviceCollection.BuildServiceProvider();
         }

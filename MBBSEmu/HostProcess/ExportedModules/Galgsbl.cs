@@ -1,4 +1,5 @@
 using MBBSEmu.CPU;
+using MBBSEmu.Date;
 using MBBSEmu.IO;
 using MBBSEmu.Memory;
 using MBBSEmu.Module;
@@ -6,7 +7,6 @@ using MBBSEmu.Server;
 using MBBSEmu.Session;
 using NLog;
 using System;
-using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 
@@ -34,10 +34,15 @@ namespace MBBSEmu.HostProcess.ExportedModules
         private const ushort ERROR_CHANNEL_NOT_DEFINED = 0xFFF6;
         private const ushort ERROR_CHANNEL_OUT_OF_RANGE = 0xFFF5;
 
-        public Galgsbl(ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary) : base(
-            logger, configuration, fileUtility, globalCache, module, channelDictionary)
+        public new void Dispose()
         {
-            _startDate = DateTime.Now;
+            base.Dispose();
+        }
+
+        public Galgsbl(IClock clock, ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary) : base(
+            clock, logger, configuration, fileUtility, globalCache, module, channelDictionary)
+        {
+            _startDate = clock.Now;
             Module.Memory.AllocateVariable("BTURNO", 9);
 
             //Check for Module Specific BTURNO #
@@ -45,7 +50,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             if (!string.IsNullOrEmpty(_configuration.GetBTURNO(Module.ModuleIdentifier)))
             {
                 bturno = _configuration.GetBTURNO(Module.ModuleIdentifier);
-                _logger.Info($"Found Module Specific BTURNO # for {Module.ModuleIdentifier}. Setting BTURNO to: {bturno}");
+                _logger.Info($"{Module.ModuleIdentifier} Found Module Specific BTURNO # -- Setting BTURNO to: {bturno}");
             }
 
             //Sanity Check
@@ -87,7 +92,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             // completed. This crashes the test.
             if (Module.Memory.TryGetVariablePointer("TICKER", out var tickerPointer))
             {
-                var seconds = (ushort)((DateTime.Now - _startDate).TotalSeconds % 0xFFFF);
+                var seconds = (ushort)((_clock.Now - _startDate).TotalSeconds % 0xFFFF);
                 Module.Memory.SetWord(tickerPointer, seconds);
             }
         }
@@ -104,9 +109,9 @@ namespace MBBSEmu.HostProcess.ExportedModules
 
             if (offsetsOnly)
             {
-                var methodPointer = new IntPtr16(0xFFFE, ordinal);
+                var methodPointer = new FarPtr(0xFFFE, ordinal);
 #if DEBUG
-                //_logger.Info($"Returning Method Offset {methodPointer.Segment:X4}:{methodPointer.Offset:X4}");
+                //_logger.Debug($"Returning Method Offset {methodPointer.Segment:X4}:{methodPointer.Offset:X4}");
 #endif
                 return methodPointer.Data;
             }
@@ -321,7 +326,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             channel.StatusChange = true;
 
 #if DEBUG
-            _logger.Info($"Injecting Stauts {status} on channel {channelNumber}");
+            _logger.Debug($"Injecting Stauts {status} on channel {channelNumber}");
 #endif
 
             Registers.AX = 0;
@@ -440,15 +445,15 @@ namespace MBBSEmu.HostProcess.ExportedModules
                 Registers.AX = 0;
 
 #if DEBUG
-                _logger.Info($"Unassigned Character Interceptor Routine on Channel {channel}");
+                _logger.Debug($"Unassigned Character Interceptor Routine on Channel {channel}");
 #endif
                 return;
             }
 
-            ChannelDictionary[channel].CharacterInterceptor = new IntPtr16(routinePointer.Data);
+            ChannelDictionary[channel].CharacterInterceptor = new FarPtr(routinePointer.Data);
 
 #if DEBUG
-            _logger.Info($"Assigned Character Interceptor Routine {ChannelDictionary[channel].CharacterInterceptor} to Channel {channel}");
+            _logger.Debug($"Assigned Character Interceptor Routine {ChannelDictionary[channel].CharacterInterceptor} to Channel {channel}");
 #endif
 
             Registers.AX = 0;
@@ -574,7 +579,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             }
 
 #if DEBUG
-            _logger.Info($"EchoEmptyInvoke on Channel {channelNumber} == {onoff == 1}");
+            _logger.Debug($"EchoEmptyInvoke on Channel {channelNumber} == {onoff == 1}");
 #endif
 
             channel.EchoEmptyInvokeEnabled = onoff == 1;
@@ -656,7 +661,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             }
 
 #if DEBUG
-            _logger.Info($"Value {onoff} for Channel {channelNumber}");
+            _logger.Debug($"Value {onoff} for Channel {channelNumber}");
 #endif
 
             Registers.AX = 0;
@@ -679,7 +684,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             }
 
 #if DEBUG
-            _logger.Info($"Setting ECHO to: {mode} for channel {channelNumber}");
+            _logger.Debug($"Setting ECHO to: {mode} for channel {channelNumber}");
 #endif
             channel.TransparentMode = mode == 0;
             Registers.AX = 0;
@@ -725,7 +730,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             if (channelNumber == 0xFFFF)
             {
 #if DEBUG
-                _logger.Info($"Disabling Monitoring on all Channels");
+                _logger.Debug($"Disabling Monitoring on all Channels");
 #endif
                 foreach (var c in ChannelDictionary.Values)
                 {
@@ -746,7 +751,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             MonitoredChannel2 = channelNumber;
             Registers.AX = 0;
 #if DEBUG
-            _logger.Info($"Enabled Monitoring on Channel {channelNumber}");
+            _logger.Debug($"Enabled Monitoring on Channel {channelNumber}");
 #endif
         }
 
@@ -757,7 +762,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             if (MonitoredChannel2 == 0xFFFF)
                 return;
 
-            ChannelDictionary[MonitoredChannel2].LastCharacterReceived = (byte)character;
+            ChannelDictionary[MonitoredChannel2].CharacterReceived = (byte)character;
             ChannelDictionary[MonitoredChannel2].InputBuffer.WriteByte((byte)character);
             ChannelDictionary[MonitoredChannel2].DataToProcess = true;
         }
@@ -917,7 +922,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             Module.Memory.SetWord("STATUS", status);
 
 #if DEBUG
-            _logger.Info($"Injecting Status {status} on Channel {channel}");
+            _logger.Debug($"Injecting Status {status} on Channel {channel}");
 #endif
         }
 
@@ -930,7 +935,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         {
             var channel = GetParameter(0);
             var character = GetParameter(1);
-            _logger.Info($"Set hard-CR character {character:X2} on Channel {channel} (Ignored -- only for ASCII mode)");
+            _logger.Debug($"Set hard-CR character {character:X2} on Channel {channel} (Ignored -- only for ASCII mode)");
         }
 
         /// <summary>
@@ -942,7 +947,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         {
             var channel = GetParameter(0);
             var character = GetParameter(1);
-            _logger.Info($"Set soft-CR character {character:X2} on Channel {channel} (Ignored -- only for ASCII mode)");
+            _logger.Debug($"Set soft-CR character {character:X2} on Channel {channel} (Ignored -- only for ASCII mode)");
         }
 
         /// <summary>
@@ -962,7 +967,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             }
 
 #if DEBUG
-            _logger.Info($"Set InputLockout on channel {channelNumber} to {onoff == 1}");
+            _logger.Debug($"Set InputLockout on channel {channelNumber} to {onoff == 1}");
 #endif
 
             channel.InputLockout = onoff == 1;
@@ -1002,7 +1007,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
 
         /// <summary>
         ///     Takes the specified character and adds it directly to the channel input buffer
-        /// 
+        ///
         ///     Signature: void chiinp(int chan,char c);
         /// </summary>
         private void chiinp()
@@ -1016,7 +1021,8 @@ namespace MBBSEmu.HostProcess.ExportedModules
                 return;
             }
 
-            channel.InputBuffer.WriteByte(character);
+            if(character != 0xD)
+                channel.InputBuffer.WriteByte(character);
         }
     }
 }

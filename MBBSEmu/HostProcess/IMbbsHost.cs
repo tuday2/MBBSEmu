@@ -1,8 +1,8 @@
+using MBBSEmu.Date;
 using MBBSEmu.Module;
 using MBBSEmu.Server;
 using MBBSEmu.Session;
 using NLog;
-using System;
 using System.Collections.Generic;
 using System.Threading;
 
@@ -60,10 +60,17 @@ namespace MBBSEmu.HostProcess
         public void WaitForShutdown();
 
         /// <summary>
+        ///    Causes the main worker thread to execute
+        /// </summary>
+        public void TriggerProcessing();
+
+        /// <summary>
         ///     Generates API Report
         /// </summary>
         public void GenerateAPIReport();
 
-        public ILogger Logger { get; set; }
+        public ILogger Logger { get; init; }
+
+        public IClock Clock { get; init; }
     }
 }

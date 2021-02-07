@@ -6,7 +6,7 @@ namespace MBBSEmu.Module
     /// <summary>
     ///     Defines a Real Time Routine as registered by RTKICK, RTIHDLR, or INITASK
     /// </summary>
-    public class RealTimeRoutine : IntPtr16
+    public class RealTimeRoutine : FarPtr
     {
         /// <summary>
         ///     The delay in seconds between routine execution
@@ -36,6 +36,11 @@ namespace MBBSEmu.Module
                 Elapsed = new Stopwatch();
                 Elapsed.Start();
             }
+        }
+
+        public RealTimeRoutine(FarPtr pointer, ushort delay = 0) : this(pointer.Segment, pointer.Offset, delay)
+        {
+
         }
     }
 }

@@ -1,4 +1,5 @@
 ﻿using MBBSEmu.CPU;
+using MBBSEmu.Date;
 using MBBSEmu.IO;
 using MBBSEmu.Memory;
 using MBBSEmu.Module;
@@ -16,8 +17,13 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// <returns></returns>
         public const ushort Segment = 0xFFFC;
 
-        internal Galme(ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary) : base(
-            logger, configuration, fileUtility, globalCache, module, channelDictionary)
+        public new void Dispose()
+        {
+            base.Dispose();
+        }
+
+        internal Galme(IClock clock, ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary) : base(
+            clock, logger, configuration, fileUtility, globalCache, module, channelDictionary)
         {
             var txtlenPointer = Module.Memory.AllocateVariable("TXTLEN", 0x2);
             Module.Memory.SetWord(txtlenPointer, 0x400);
@@ -34,15 +40,18 @@ namespace MBBSEmu.HostProcess.ExportedModules
 
             if (offsetsOnly)
             {
-                var methodPointer = new IntPtr16(0xFFFC, ordinal);
+                var methodPointer = new FarPtr(0xFFFC, ordinal);
 #if DEBUG
-                //_logger.Info($"Returning Method Offset {methodPointer.Segment:X4}:{methodPointer.Offset:X4}");
+                //_logger.Debug($"Returning Method Offset {methodPointer.Segment:X4}:{methodPointer.Offset:X4}");
 #endif
                 return methodPointer.Data;
             }
 
             switch (ordinal)
             {
+                case 10:
+                    gforac();
+                    break;
                 case 30:
                     oldsend();
                     break;
@@ -93,6 +102,21 @@ namespace MBBSEmu.HostProcess.ExportedModules
         {
 #if DEBUG
             _logger.Warn("Ignoring OLDSEND for now, messaging not enabled in MBBSEmu");
+#endif
+            Registers.AX = 1;
+        }
+
+        /// <summary>
+        ///     Returns standard access level code
+        ///
+        ///     Signature: int gforac(const CHAR *uid, USHORT fid)
+        /// </summary>
+        private void gforac()
+        {
+            //var userId = GetParameterString(0);
+            var forumId = GetParameter(2);
+#if DEBUG
+            _logger.Warn("Ignoring GFORAC for now, messaging not enabled in MBBSEmu");
 #endif
             Registers.AX = 1;
         }

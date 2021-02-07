@@ -24,23 +24,28 @@ namespace MBBSEmu.Btrieve
         /// </summary>
         public ushort PageCount => (ushort) (Data.Length / PageLength - 1);
 
-        private ushort _recordCount;
+        private uint _recordCount;
         /// <summary>
         ///     Total Number of Records in the specified Btrieve File
         /// </summary>
-        public ushort RecordCount
+        public uint RecordCount
         {
             get
             {
                 if (Data?.Length > 0)
-                    return BitConverter.ToUInt16(Data, 0x1C);
+                {
+                    return (uint)(BitConverter.ToUInt16(Data, 0x1A) << 16) | BitConverter.ToUInt16(Data, 0x1C);
+                }
 
                 return _recordCount;
             }
             set
             {
                 if (Data?.Length > 0)
-                    Array.Copy(BitConverter.GetBytes(value), 0, Data, 0x1C, sizeof(ushort));
+                {
+                    Array.Copy(BitConverter.GetBytes((ushort)(value >> 16)), 0, Data, 0x1A, sizeof(ushort));
+                    Array.Copy(BitConverter.GetBytes((ushort)(value & 0xFFFF)), 0, Data, 0x1C, sizeof(ushort));
+                }
 
                 _recordCount = value;
             }

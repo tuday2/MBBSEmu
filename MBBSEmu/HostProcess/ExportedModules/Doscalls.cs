@@ -1,4 +1,5 @@
 ﻿using MBBSEmu.CPU;
+using MBBSEmu.Date;
 using MBBSEmu.IO;
 using MBBSEmu.Memory;
 using MBBSEmu.Module;
@@ -20,8 +21,13 @@ namespace MBBSEmu.HostProcess.ExportedModules
         public const ushort DosSegmentBase = 0x200;
         public ushort DosSegmentOffset = 0;
 
-        internal Doscalls(ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary) : base(
-            logger, configuration, fileUtility, globalCache, module, channelDictionary)
+        public new void Dispose()
+        {
+            base.Dispose();
+        }
+
+        internal Doscalls(IClock clock, ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary) : base(
+            clock, logger, configuration, fileUtility, globalCache, module, channelDictionary)
         {
         }
 
@@ -35,9 +41,9 @@ namespace MBBSEmu.HostProcess.ExportedModules
 
             if (onlyProperties)
             {
-                var methodPointer = new IntPtr16(Segment, ordinal);
+                var methodPointer = new FarPtr(Segment, ordinal);
 #if DEBUG
-                //_logger.Info($"Returning Method Offset {methodPointer.Segment:X4}:{methodPointer.Offset:X4}");
+                //_logger.Debug($"Returning Method Offset {methodPointer.Segment:X4}:{methodPointer.Offset:X4}");
 #endif
                 return methodPointer.Data;
             }
@@ -121,8 +127,8 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// </summary>
         public void DosGetModHandle()
         {
-            _logger.Warn($"Getting External Modules is currently not supported");
-            Registers.AX = 0x126;
+            _logger.Warn($"({Module.ModuleIdentifier}) Getting External Modules is currently not supported");
+            Registers.AX = 0;
         }
 
         /// <summary>
@@ -139,7 +145,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             //I've only seen this in TW2002, and it passes in Code Segment
             if (Module.Memory.HasSegment(moduleHandle))
             {
-                var moduleFileName = Module.File.FileName + '\0';
+                var moduleFileName = Module.MainModuleDll.File.FileName + '\0';
                 Module.Memory.SetArray(bufferPointer, Encoding.ASCII.GetBytes(moduleFileName));
                 Registers.AX = 0;
             }
@@ -160,7 +166,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// </summary>
         public void DosGetProcAddr()
         {
-            _logger.Warn($"Getting External Procedures is currently not supported");
+            _logger.Warn($"({Module.ModuleIdentifier}) Getting External Procedures is currently not supported");
             Registers.AX = 6;
             RealignStack(10);
         }

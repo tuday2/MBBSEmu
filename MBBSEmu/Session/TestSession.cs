@@ -1,9 +1,10 @@
 using MBBSEmu.HostProcess;
 using MBBSEmu.Session.Enums;
+using MBBSEmu.TextVariables;
+using System;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Text;
-using System;
 
 namespace MBBSEmu.Session
 {
@@ -11,7 +12,7 @@ namespace MBBSEmu.Session
     {
         private readonly BlockingCollection<byte> _data = new BlockingCollection<byte>();
 
-        public TestSession(IMbbsHost host) : base("test")
+        public TestSession(IMbbsHost host, ITextVariableService textVariableService) : base(host, "test", EnumSessionState.EnteringModule, textVariableService)
         {
             SendToClientMethod = Send;
             OutputEnabled = true;
@@ -19,22 +20,9 @@ namespace MBBSEmu.Session
             CurrentModule = host?.GetModule("MBBSEMU");
 
             SessionType = EnumSessionType.Test;
-            SessionState = EnumSessionState.EnteringModule;
 
             Username = "Sysop";
             Email  = "sysop@grnet.com";
-        }
-
-        private EnumSessionState _enumSessionState;
-
-        public event EventHandler<EnumSessionState> OnSessionStateChanged;
-
-        public override EnumSessionState SessionState {
-            get => _enumSessionState;
-            set {
-                _enumSessionState = value;
-                OnSessionStateChanged?.Invoke(this, value);
-            }
         }
 
         public override void Stop() {}

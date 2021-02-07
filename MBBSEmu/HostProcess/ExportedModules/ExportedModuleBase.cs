@@ -1,25 +1,24 @@
 using MBBSEmu.Btrieve;
 using MBBSEmu.CPU;
-using MBBSEmu.Extensions;
+using MBBSEmu.Date;
+using MBBSEmu.HostProcess.Structs;
 using MBBSEmu.IO;
 using MBBSEmu.Memory;
 using MBBSEmu.Module;
 using MBBSEmu.Session;
-using Microsoft.Extensions.Configuration;
 using NLog;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text;
-using MBBSEmu.HostProcess.Structs;
 
 namespace MBBSEmu.HostProcess.ExportedModules
 {
     /// <summary>
     ///     Base Class for Exported MajorBBS Routines
     /// </summary>
-    public abstract class ExportedModuleBase
+    public abstract class ExportedModuleBase : IDisposable
     {
         /// <summary>
         ///     The return value from the GetLeadingNumberFromString methods
@@ -63,6 +62,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         public readonly PointerDictionary<McvFile> McvPointerDictionary;
 
         private protected readonly ILogger _logger;
+        private protected readonly IClock _clock;
         private protected readonly AppSettings _configuration;
         private protected readonly IFileUtility _fileFinder;
         private protected readonly IGlobalCache _globalCache;
@@ -70,6 +70,11 @@ namespace MBBSEmu.HostProcess.ExportedModules
         public CpuRegisters Registers;
 
         public MbbsModule Module;
+
+        /// <summary>
+        ///     Specifies Module DLL being invoked from, if multiple are present
+        /// </summary>
+        public ushort ModuleDll;
 
         /// <summary>
         ///     Current Channel Number being serviced
@@ -87,9 +92,19 @@ namespace MBBSEmu.HostProcess.ExportedModules
         private protected const ushort GENBB_BASE_SEGMENT = 0x3000;
         private protected const ushort ACCBB_BASE_SEGMENT = 0x3001;
 
-
-        private protected ExportedModuleBase(ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary)
+        public void Dispose()
         {
+            foreach (var f in FilePointerDictionary)
+            {
+                f.Value.Close();
+                _logger.Warn($"({Module.ModuleIdentifier}) WARNING -- File: {f.Value.Name} left open by module, closing");
+            }
+            FilePointerDictionary.Clear();
+        }
+
+        private protected ExportedModuleBase(IClock clock, ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary)
+        {
+            _clock = clock;
             _logger = logger;
             _configuration = configuration;
             _fileFinder = fileUtility;
@@ -104,6 +119,31 @@ namespace MBBSEmu.HostProcess.ExportedModules
         }
 
         /// <summary>
+        ///     Sets the parameter by ordinal passed into the routine
+        /// </summary>
+        /// <param name="parameterOrdinal"></param>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private protected void SetParameter(int parameterOrdinal, ushort value)
+        {
+            Module.Memory.SetWord(Registers.SS, GetParameterOffset(parameterOrdinal), value);
+        }
+
+        /// <summary>
+        ///     Sets the parameter pointer by ordinal passed into the routine
+        /// </summary>
+        /// <param name="parameterOrdinal"></param>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private protected void SetParameterPointer(int parameterOrdinal, FarPtr value)
+        {
+            SetParameter(parameterOrdinal, value.Offset);
+            SetParameter(parameterOrdinal + 1, value.Segment);
+        }
+
+        /// <summary>
         ///     Gets the parameter by ordinal passed into the routine
         /// </summary>
         /// <param name="parameterOrdinal"></param>
@@ -115,14 +155,20 @@ namespace MBBSEmu.HostProcess.ExportedModules
         }
 
         /// <summary>
+        ///     Gets the boolean parameter by ordinal passed into the routine
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private protected bool GetParameterBool(int parameterOrdinal) => GetParameter(parameterOrdinal) != 0;
+
+        /// <summary>
         ///     Gets the parameter pointer by ordinal passed into the routine
         /// </summary>
         /// <param name="parameterOrdinal"></param>
         /// <returns></returns>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private protected IntPtr16 GetParameterPointer(int parameterOrdinal)
+        private protected FarPtr GetParameterPointer(int parameterOrdinal)
         {
-            return new IntPtr16(GetParameter(parameterOrdinal + 1), GetParameter(parameterOrdinal));
+            return new FarPtr(GetParameter(parameterOrdinal + 1), GetParameter(parameterOrdinal));
         }
 
         /// <summary>
@@ -165,7 +211,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// <returns></returns>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private protected ushort GetParameterOffset(int parameterOrdinal) =>
-            (ushort) (Registers.BP + 6 + (2 * parameterOrdinal));
+            (ushort)(Registers.BP + 6 + (2 * parameterOrdinal));
 
         /// <summary>
         ///     Gets a string Parameter
@@ -180,10 +226,22 @@ namespace MBBSEmu.HostProcess.ExportedModules
         }
 
         /// <summary>
+        ///     Gets a string Parameter as a string span
+        /// </summary>
+        /// <param name="parameterOrdinal"></param>
+        /// <returns></returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private protected ReadOnlySpan<byte> GetParameterStringSpan(int parameterOrdinal, bool stripNull = false)
+        {
+            var stringPointer = GetParameterPointer(parameterOrdinal);
+            return Module.Memory.GetString(stringPointer, stripNull);
+        }
+
+        /// <summary>
         ///     Gets a Filename Parameter
         /// </summary>
         /// <param name="parameterOrdinal"></param>
-        /// <returns>The filename parameter, uppercased like DOS expects.</returns>
+        /// <returns>The filename parameter, upper-cased like DOS expects.</returns>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private protected string GetParameterFilename(int parameterOrdinal)
         {
@@ -212,10 +270,16 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// <returns></returns>
         private protected ReadOnlySpan<byte> FormatPrintf(ReadOnlySpan<byte> stringToParse, ushort startingParameterOrdinal, bool isVsPrintf = false)
         {
+            if (stringToParse.Length == 1 && stringToParse[0] == 0x0)
+            {
+                _logger.Debug($"({Module.ModuleIdentifier}) Empty Formatter (vsprintf:{isVsPrintf})");
+                return new byte[] {0};
+            }
+
             using var msOutput = new MemoryStream(stringToParse.Length);
             var currentParameter = startingParameterOrdinal;
 
-            var vsPrintfBase = new IntPtr16();
+            var vsPrintfBase = new FarPtr();
             if (isVsPrintf)
             {
                 vsPrintfBase = GetParameterPointer(currentParameter);
@@ -262,7 +326,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
                         else
                         {
                             msOutput.Write(Encoding.ASCII.GetBytes("Invalid Pointer"));
-                            _logger.Error($"Invalid Pointer: {parameterSegment:X4}:{parameterOffset:X4}");
+                            _logger.Error($"({Module.ModuleIdentifier}) Invalid Pointer: {parameterSegment:X4}:{parameterOffset:X4}");
                         }
 
                         continue;
@@ -348,6 +412,8 @@ namespace MBBSEmu.HostProcess.ExportedModules
                         }
                         i++;
                     }
+
+
                     if (!string.IsNullOrEmpty(stringPrecisionValue))
                         stringPrecision = int.Parse(stringPrecisionValue);
 
@@ -378,7 +444,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
                                 variableLength = 4;
                                 break;
                             default:
-                                throw new Exception("Unsupported printf Length Specified");
+                                throw new Exception($"({Module.ModuleIdentifier}) Unsupported printf Length Specified");
                         }
 
                         i++;
@@ -387,9 +453,11 @@ namespace MBBSEmu.HostProcess.ExportedModules
                     //Finally i should be at the specifier
                     if (!InSpan(PRINTF_SPECIFIERS, stringToParse.Slice(i, 1)))
                     {
-                        _logger.Warn($"Invalid printf format: {Encoding.ASCII.GetString(stringToParse)}");
+                        _logger.Debug($"({Module.ModuleIdentifier}) Invalid printf format: {Encoding.ASCII.GetString(stringToParse)}");
                         continue;
                     }
+
+                    var padCharacter = ' ';
 
                     switch ((char)stringToParse[i])
                     {
@@ -427,7 +495,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
                                     else
                                     {
                                         parameter = Encoding.ASCII.GetBytes("Invalid Pointer");
-                                        _logger.Error($"Invalid Pointer: {stringPointer}");
+                                        _logger.Error($"({Module.ModuleIdentifier}) Invalid Pointer: {stringPointer}");
                                     }
                                 }
                                 else
@@ -441,7 +509,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
                                     else
                                     {
                                         parameter = Encoding.ASCII.GetBytes("Invalid Pointer");
-                                        _logger.Error($"Invalid Pointer: {parameterSegment:X4}:{parameterOffset:X4}");
+                                        _logger.Error($"({Module.ModuleIdentifier}) Invalid Pointer: {parameterSegment:X4}:{parameterOffset:X4}");
                                     }
                                 }
 
@@ -456,6 +524,13 @@ namespace MBBSEmu.HostProcess.ExportedModules
                         case 'd':
                         case 'u':
                             {
+                                if (stringPrecision > 0)
+                                {
+                                    padCharacter = '0';
+                                    // can't left justify a digit with 0 since it changes the digit
+                                    stringFlags &= ~EnumPrintfFlags.LeftJustify;
+                                }
+
                                 long value;
                                 if (isVsPrintf)
                                 {
@@ -501,7 +576,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
                                         default:
                                             value = GetParameter(currentParameter++);
                                             if (stringToParse[i] != 'u')
-                                                    value = (short)value;
+                                                value = (short)value;
                                             break;
                                     }
                                 }
@@ -532,7 +607,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
                             }
                         default:
                             throw new InvalidDataException(
-                                $"Unhandled Printf Control Character: {(char)stringToParse[i + 1]}");
+                                $"({Module.ModuleIdentifier}) Unhandled Printf Control Character: {(char)stringToParse[i + 1]}");
                     }
 
                     //Process Padding
@@ -545,7 +620,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
                             {
                                 //Pad at the end
                                 while (msFormattedValue.Length < stringWidth)
-                                    msFormattedValue.WriteByte((byte)' ');
+                                    msFormattedValue.WriteByte((byte)padCharacter);
                             }
                             else
                             {
@@ -553,7 +628,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
                                 var valueCache = msFormattedValue.ToArray();
                                 msFormattedValue.SetLength(0);
                                 while (msFormattedValue.Length < stringWidth - valueCache.Length)
-                                    msFormattedValue.WriteByte((byte)' ');
+                                    msFormattedValue.WriteByte((byte)padCharacter);
 
                                 msFormattedValue.Write(valueCache);
                             }
@@ -581,7 +656,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
                     return inputArray.Slice(0, i + (stripNull ? 0 : 1));
             }
 
-            _logger.Warn("Unable to find String terminator");
+            _logger.Warn($"({Module.ModuleIdentifier}) Unable to find String terminator");
             return inputArray;
         }
 
@@ -625,15 +700,6 @@ namespace MBBSEmu.HostProcess.ExportedModules
 
                 switch (Encoding.ASCII.GetString(outputBuffer.Slice(variableNameStart, variableNameLength)))
                 {
-                    //Built in internal Text Variables
-                    case "USERID":
-                        newOutputBuffer.Write(Encoding.ASCII.GetBytes(ChannelDictionary[ChannelNumber].Username));
-                        break;
-
-                    case "DATE":
-                        newOutputBuffer.Write(Encoding.ASCII.GetBytes(DateTime.Now.ToString("MM/dd/yyyy")));
-                        break;
-
                     //Registered Variables
                     case var textVariableName when Module.TextVariables.ContainsKey(textVariableName):
                         //Get Variable Entry Point
@@ -641,13 +707,12 @@ namespace MBBSEmu.HostProcess.ExportedModules
                         var resultRegisters = Module.Execute(variableEntryPoint, ChannelNumber, true, true, null, 0xF100);
                         var variableData = Module.Memory.GetString(resultRegisters.DX, resultRegisters.AX, true);
 #if DEBUG
-                        _logger.Info($"Processing Text Variable {textVariableName} ({variableEntryPoint}): {BitConverter.ToString(variableData.ToArray()).Replace("-", " ")}");
+                        _logger.Debug(($"({Module.ModuleIdentifier}) Processing Text Variable {textVariableName} ({variableEntryPoint}): {BitConverter.ToString(variableData.ToArray()).Replace("-", " ")}"));
 #endif
                         newOutputBuffer.Write(variableData);
                         break;
-
                     default:
-                        _logger.Error($"Unknown Text Variable: {Encoding.ASCII.GetString(outputBuffer.Slice(variableNameStart, variableNameLength))}");
+                        _logger.Error($"({Module.ModuleIdentifier}) Unknown Text Variable: {Encoding.ASCII.GetString(outputBuffer.Slice(variableNameStart, variableNameLength))}");
                         break;
                 }
             }
@@ -1022,7 +1087,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// </summary>
         /// <param name="btrievePointer"></param>
         /// <param name="btrieveFileProcessor"></param>
-        private protected void BtrieveSaveProcessor(IntPtr16 btrievePointer, BtrieveFileProcessor btrieveFileProcessor) =>
+        private protected void BtrieveSaveProcessor(FarPtr btrievePointer, BtrieveFileProcessor btrieveFileProcessor) =>
             _globalCache.Set(BtrieveCacheKey(btrievePointer),
                 btrieveFileProcessor);
 
@@ -1031,10 +1096,10 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// </summary>
         /// <param name="btrievePointer"></param>
         /// <returns></returns>
-        private protected BtrieveFileProcessor BtrieveGetProcessor(IntPtr16 btrievePointer) =>
+        private protected BtrieveFileProcessor BtrieveGetProcessor(FarPtr btrievePointer) =>
             _globalCache.Get<BtrieveFileProcessor>(BtrieveCacheKey(btrievePointer));
 
-        private protected bool BtrieveDeleteProcessor(IntPtr16 btrievePointer)
+        private protected bool BtrieveDeleteProcessor(FarPtr btrievePointer)
         {
             var key = BtrieveCacheKey(btrievePointer);
 
@@ -1053,7 +1118,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// </summary>
         /// <param name="btrievePointer"></param>
         /// <returns></returns>
-        private string BtrieveCacheKey(IntPtr16 btrievePointer) =>
+        private string BtrieveCacheKey(FarPtr btrievePointer) =>
             $"{Module.ModuleIdentifier}-Btrieve-{btrievePointer}";
 
         /// <summary>
@@ -1066,13 +1131,13 @@ namespace MBBSEmu.HostProcess.ExportedModules
         private protected void BtrieveSetupGlobalPointer(string variableName, string fileName, ushort baseSegment)
         {
             //Construct Pointer for Btrieve Struct and Name/Data pointers
-            var btrievePointer = new IntPtr16(baseSegment, 0x0); //Btrieve Struct
-            var btrieveNamePointer = new IntPtr16(baseSegment, 0x100); //File Name Pointer
-            var btrieveDataPointer = new IntPtr16(baseSegment, 0x200); //Record Data Pointer
+            var btrievePointer = new FarPtr(baseSegment, 0x0); //Btrieve Struct
+            var btrieveNamePointer = new FarPtr(baseSegment, 0x100); //File Name Pointer
+            var btrieveDataPointer = new FarPtr(baseSegment, 0x200); //Record Data Pointer
 
             //Some Btrieve Processors can be declared elsewhere in the system, so verify the processor doesn't already exist before creating
             if (!_globalCache.ContainsKey($"{variableName}-PROCESSOR"))
-                _globalCache.Set($"{variableName}-PROCESSOR", new BtrieveFileProcessor(_fileFinder, Directory.GetCurrentDirectory(), fileName));
+                _globalCache.Set($"{variableName}-PROCESSOR", new BtrieveFileProcessor(_fileFinder, Directory.GetCurrentDirectory(), fileName, _configuration.BtrieveCacheSize));
 
             //Setup the Pointer to the Global Address -- ensuring each module is referencing the same Pointer & Processor
             if (!_globalCache.ContainsKey($"{variableName}-POINTER"))
@@ -1099,7 +1164,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             BtrieveSaveProcessor(btrievePointer, _globalCache.Get<BtrieveFileProcessor>($"{variableName}-PROCESSOR"));
 
             //Local Variable that will hold the pointer to the GENBB-POINTER
-            var localPointer = Module.Memory.GetOrAllocateVariablePointer(variableName, IntPtr16.Size);
+            var localPointer = Module.Memory.GetOrAllocateVariablePointer(variableName, FarPtr.Size);
             Module.Memory.SetPointer(localPointer, btrievePointer);
         }
 

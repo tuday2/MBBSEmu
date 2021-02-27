@@ -26,6 +26,7 @@ namespace MBBSEmu.Tests.ExportedModules.Majorbbs {
         protected const int FSEEK_ORDINAL = 266;
         protected const int FPUTS_ORDINAL = 1125;
         protected const int FGETS_ORDINAL = 210;
+        protected const int MDFGETS_ORDINAL = 405;
 
         protected FileTestBase() : base(Path.Join(Path.GetTempPath(), $"mbbsemu{RANDOM.Next()}"))
         {
@@ -206,6 +207,20 @@ namespace MBBSEmu.Tests.ExportedModules.Majorbbs {
                 srcPtr.Segment
             });
             
+            return mbbsEmuCpuRegisters.GetPointer();
+        }
+
+        protected FarPtr mdfgets(FarPtr putStringPtr, ushort numChars, FarPtr srcPtr)
+        {
+            ExecuteApiTest(HostProcess.ExportedModules.Majorbbs.Segment, MDFGETS_ORDINAL, new List<ushort>
+            {
+                putStringPtr.Offset,
+                putStringPtr.Segment,
+                numChars,
+                srcPtr.Offset,
+                srcPtr.Segment
+            });
+
             return mbbsEmuCpuRegisters.GetPointer();
         }
 

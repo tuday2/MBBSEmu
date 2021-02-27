@@ -21,6 +21,17 @@ namespace MBBSEmu.Tests.ExportedModules.Majorbbs
 
         private const int LOREM_IPSUM_LENGTH = 594;
 
+        private const string LOREM_IPSUM_NEWLINE = "Lorem ipsum dolor sit amet, consectetur adipiscing elit,"
+                                           + "sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Porttitor leo\r\n"
+                                           + "a diam sollicitudin tempor id eu nisl. Nascetur ridiculus mus mauris vitae ultricies "
+                                           + "leo. Dictum non consectetur a erat. Nunc vel risus commodo viverra maecenas accumsan "
+                                           + "lacus vel facilisis. Ipsum nunc aliquet bibendum enim facilisis. Malesuada fames ac "
+                                           + "turpis egestas maecenas pharetra. Nunc lobortis mattis aliquam faucibus purus. "
+                                           + "Pretium vulputate sapien nec sagittis. Rutrum quisque non tellus orci. Lobortis "
+                                           + "feugiat vivamus at augue eget arcu dictum.\r\n";
+
+        private const int LOREM_IPSUM_NEWLINE_LENGTH = 596;
+
         [Fact]
         public void length_matches_constant()
         {
@@ -400,6 +411,35 @@ namespace MBBSEmu.Tests.ExportedModules.Majorbbs
         }
 
         [Theory]
+        [InlineData("Lorem ipsum dolor sit \0", 0)]
+        [InlineData("m dolor sit \0", 10)]
+        [InlineData("t amet\0", 20)]
+        [InlineData("t, con\0", 25)]
+        [InlineData("\0", 40)]
+        [InlineData("dictum.\r\n\0", 585)]
+        public void mdfgets_fseek_origin0_file(string stringGet, int fseekOffset)
+        {
+            //Reset State
+            Reset();
+
+            var filePath = CreateTextFile("file.txt", LOREM_IPSUM_NEWLINE);
+            Assert.Equal(LOREM_IPSUM_NEWLINE.Length, new FileInfo(filePath).Length);
+
+            var stringGetPtr = mbbsEmuMemoryCore.AllocateVariable("STRING_GET", (ushort)stringGet.Length);
+
+            var filep = fopen("FILE.TXT", "r");
+            Assert.NotEqual(0, filep.Segment);
+            Assert.NotEqual(0, filep.Offset);
+
+            Assert.Equal(0, fseek(filep, fseekOffset, 0));
+
+            Assert.Equal(stringGetPtr, mdfgets(stringGetPtr, (ushort)stringGet.Length, filep));
+            Assert.Equal(stringGet, Encoding.ASCII.GetString(mbbsEmuMemoryCore.GetString("STRING_GET")));
+
+            Assert.Equal(0, fclose(filep));
+        }
+
+        [Theory]
         [InlineData(4, 'm', 1)]
         [InlineData(10, 'm', 1)]
         [InlineData(20, 't', 1)]
@@ -650,6 +690,16 @@ namespace MBBSEmu.Tests.ExportedModules.Majorbbs
 
             //Pass empty pointer
             Assert.Throws<FileNotFoundException>(() => fgets(new FarPtr(), 0, new FarPtr()));
+        }
+
+        [Fact]
+        public void mdfgets_InvalidStream_Throw()
+        {
+            //Reset State
+            Reset();
+
+            //Pass empty pointer
+            Assert.Throws<FileNotFoundException>(() => mdfgets(new FarPtr(), 0, new FarPtr()));
         }
 
         [Fact]

@@ -8,6 +8,7 @@ using Xunit;
 
 namespace MBBSEmu.Tests.ExportedModules.Majorbbs
 {
+    [Collection("Non-Parallel")]
     public class fnd1st_Tests : ExportedModuleTestBase, IDisposable
     {
       private const int FND1ST_ORDINAL = 694;
@@ -121,6 +122,36 @@ namespace MBBSEmu.Tests.ExportedModules.Majorbbs
             Assert.True(Math.Abs(ticksNow - fbs.DateTime.Ticks) <= FIVE_SECOND_TICKS);
 
             return fbs.Name;
+        }
+
+        [Fact]
+        public void find1st_dirnotfound_Test()
+        {
+            //Reset State
+            Reset();
+
+            var fndblkPointer = mbbsEmuMemoryCore.AllocateVariable("FNDBLK", FndblkStruct.StructSize);
+            var searchPointer = mbbsEmuMemoryCore.AllocateVariable("STR", 64);
+
+            //Pass in directory that does not exist
+            mbbsEmuMemoryCore.SetArray(searchPointer, Encoding.ASCII.GetBytes("hello/test.dat"));
+
+            //Execute Test
+            ExecuteApiTest(HostProcess.ExportedModules.Majorbbs.Segment, FND1ST_ORDINAL, new List<ushort> { fndblkPointer.Offset, fndblkPointer.Segment, searchPointer.Offset, searchPointer.Segment, 0 });
+
+            Assert.Equal(0, mbbsEmuCpuRegisters.AX);
+        }
+
+        [Fact]
+        public void findnxt_invalid_guid_Test()
+        {
+            //Reset State
+            Reset();
+
+            //Execute Test -- pass in invalid pointer
+            ExecuteApiTest(HostProcess.ExportedModules.Majorbbs.Segment, FNDNXT_ORDINAL, new List<ushort> { 0, 0 });
+
+            Assert.Equal(0, mbbsEmuCpuRegisters.AX);
         }
 
         private void CreateFile(string file)

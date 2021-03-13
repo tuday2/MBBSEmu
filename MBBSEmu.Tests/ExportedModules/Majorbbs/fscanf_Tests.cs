@@ -1,12 +1,13 @@
+using MBBSEmu.Memory;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
-using System;
-using MBBSEmu.Memory;
 using Xunit;
 
 namespace MBBSEmu.Tests.ExportedModules.Majorbbs
 {
+    [Collection("Non-Parallel")]
     public class fscanf_Tests : FileTestBase, IDisposable
     {
         private const int FSCANF_ORDINAL = 232;
@@ -30,7 +31,7 @@ namespace MBBSEmu.Tests.ExportedModules.Majorbbs
             Assert.NotEqual(0, filep.Segment);
             Assert.NotEqual(0, filep.Offset);
 
-            var formatPointer = mbbsEmuMemoryCore.AllocateVariable(null, 16);
+            var formatPointer = mbbsEmuMemoryCore.AllocateVariable(null, (ushort)(FORMAT.Length + 1));
             mbbsEmuMemoryCore.SetArray(formatPointer, Encoding.ASCII.GetBytes(FORMAT));
 
             var intPointer1 = mbbsEmuMemoryCore.AllocateVariable("FIRST", 2);
@@ -64,6 +65,18 @@ namespace MBBSEmu.Tests.ExportedModules.Majorbbs
             Assert.Equal(0, fclose(filep));
 
             Assert.Equal(6, lines);
+        }
+
+        [Fact]
+        public void fscanf_invalid_filestream_Test()
+        {
+            //Reset State
+            Reset();
+
+            //Execute Test -- pass in invalid pointer
+            ExecuteApiTest(HostProcess.ExportedModules.Majorbbs.Segment, FSCANF_ORDINAL, new List<ushort> { 0, 0 });
+
+            Assert.Equal(0, mbbsEmuCpuRegisters.AX);
         }
     }
 }

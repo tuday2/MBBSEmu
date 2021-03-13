@@ -1,6 +1,7 @@
 ﻿using FluentAssertions;
 using MBBSEmu.Extensions;
 using MBBSEmu.HostProcess.Structs;
+using System;
 using System.IO;
 using Xunit;
 
@@ -86,6 +87,26 @@ namespace MBBSEmu.Tests.ExportedModules.Majorbbs
 
             setmode(55, 0x4000);
             Assert.Equal(0xFFFF, mbbsEmuCpuRegisters.AX);
+        }
+
+        [Fact]
+        public void invalid_setmode_Throw()
+        {
+            //Reset State
+            Reset();
+
+            //Create Text File
+            var fileName = CreateTextFile("file.txt", FILE_CONTENTS);
+
+            var fileHandle = open("file.txt", EnumOpenFlags.O_RDONLY | EnumOpenFlags.O_BINARY);
+            fileHandle.Should().NotBe(0xFFFF);
+
+            //Pass empty pointer
+            Assert.Throws<Exception>(() => setmode(fileHandle, 0x3000));
+
+            close(fileHandle);
+
+            File.Delete(fileName);
         }
     }
 }

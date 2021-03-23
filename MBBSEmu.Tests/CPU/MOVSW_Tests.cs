@@ -11,8 +11,8 @@ namespace MBBSEmu.Tests.CPU
         public void MOVSW_Test()
         {
             Reset();
-            mbbsEmuMemoryCore.AddSegment(2);
-            mbbsEmuMemoryCore.AddSegment(3);
+            mbbsEmuProtectedModeMemoryCore.AddSegment(2);
+            mbbsEmuProtectedModeMemoryCore.AddSegment(3);
             mbbsEmuCpuRegisters.DS = 2;
             mbbsEmuCpuRegisters.SI = 0;
             mbbsEmuCpuRegisters.ES = 3;
@@ -36,8 +36,8 @@ namespace MBBSEmu.Tests.CPU
         public void MOVSW_Rep_Test()
         {
             Reset();
-            mbbsEmuMemoryCore.AddSegment(2);
-            mbbsEmuMemoryCore.AddSegment(3);
+            mbbsEmuProtectedModeMemoryCore.AddSegment(2);
+            mbbsEmuProtectedModeMemoryCore.AddSegment(3);
             mbbsEmuCpuRegisters.DS = 2;
             mbbsEmuCpuRegisters.SI = 0;
             mbbsEmuCpuRegisters.ES = 3;
@@ -55,21 +55,22 @@ namespace MBBSEmu.Tests.CPU
 
             //Verify the 10 Words were copies
             for (ushort i = 0; i < 20; i+= 2)
+            {
                 Assert.Equal(0xFFFF, mbbsEmuMemoryCore.GetWord(mbbsEmuCpuRegisters.ES, i));
-
+            }
             Assert.Equal(0, mbbsEmuMemoryCore.GetWord(mbbsEmuCpuRegisters.ES, 22));
 
             Assert.Equal(0, mbbsEmuCpuRegisters.CX);
-            Assert.Equal(22, mbbsEmuCpuRegisters.SI);
-            Assert.Equal(22, mbbsEmuCpuRegisters.DI);
+            Assert.Equal(20, mbbsEmuCpuRegisters.SI);
+            Assert.Equal(20, mbbsEmuCpuRegisters.DI);
         }
 
         [Fact]
         public void MOVSW_Rep_DF_Test()
         {
             Reset();
-            mbbsEmuMemoryCore.AddSegment(2);
-            mbbsEmuMemoryCore.AddSegment(3);
+            mbbsEmuProtectedModeMemoryCore.AddSegment(2);
+            mbbsEmuProtectedModeMemoryCore.AddSegment(3);
             mbbsEmuCpuRegisters.DS = 2;
             mbbsEmuCpuRegisters.SI = 22;
             mbbsEmuCpuRegisters.ES = 3;
@@ -88,14 +89,14 @@ namespace MBBSEmu.Tests.CPU
             mbbsEmuCpuCore.Tick();
 
             //Verify the 10 Words were copies
-            for (ushort i = 22; i > 0; i -= 2)
+            for (ushort i = 22; i > 2; i -= 2)
                 Assert.Equal(0xFFFF, mbbsEmuMemoryCore.GetWord(mbbsEmuCpuRegisters.ES, i));
 
             Assert.Equal(0, mbbsEmuMemoryCore.GetWord(mbbsEmuCpuRegisters.ES, 0));
 
             Assert.Equal(0, mbbsEmuCpuRegisters.CX);
-            Assert.Equal(0, mbbsEmuCpuRegisters.SI);
-            Assert.Equal(0, mbbsEmuCpuRegisters.DI);
+            Assert.Equal(2, mbbsEmuCpuRegisters.SI);
+            Assert.Equal(2, mbbsEmuCpuRegisters.DI);
         }
     }
 }

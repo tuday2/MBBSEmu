@@ -15,7 +15,7 @@ namespace MBBSEmu.Disassembler.Artifacts
         public ushort HeaderParagraphs { get; set; }
         public ushort MinExtraParagraphs { get; set; }
         public ushort MaxExtraParagraphs { get; set; }
-        public ushort RelativeSS { get; set; }
+        public ushort InitialSS { get; set; }
         public ushort InitialSP { get; set; }
         public ushort Checksum { get; set; }
         public ushort InitialIP { get; set; }
@@ -23,7 +23,7 @@ namespace MBBSEmu.Disassembler.Artifacts
         public ushort RelocationOffset { get; set; }
         public ushort OverlayNumber { get; set; }
         public ushort HeaderSize => (ushort)(HeaderParagraphs * 16);
-        public ushort ProgramSize => (ushort)((BlocksInFile - 1) * 512 + BytesInLastBlock - HeaderSize);
+        public int ProgramSize => ((BlocksInFile - 1) * 512 + BytesInLastBlock - HeaderSize);
 
         public MZHeader(byte[] fileContent)
         {
@@ -34,7 +34,7 @@ namespace MBBSEmu.Disassembler.Artifacts
             HeaderParagraphs = BitConverter.ToUInt16(fileContent, 8);
             MinExtraParagraphs = BitConverter.ToUInt16(fileContent, 10);
             MaxExtraParagraphs = BitConverter.ToUInt16(fileContent, 12);
-            RelativeSS = BitConverter.ToUInt16(fileContent, 14);
+            InitialSS = BitConverter.ToUInt16(fileContent, 14);
             InitialSP = BitConverter.ToUInt16(fileContent, 16);
             Checksum = BitConverter.ToUInt16(fileContent, 18);
             InitialIP = BitConverter.ToUInt16(fileContent, 20);

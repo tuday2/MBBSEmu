@@ -123,7 +123,7 @@ namespace MBBSEmu.CPU
         ///     AggressiveOptimization == The method contains a hot path and should be optimized
         ///
         ///     Inlining actually is appropriate for the Opcode Subroutines (8, 16, 32 bit variations) as it inlines
-        ///     those with their Opcode function. 
+        ///     those with their Opcode function.
         ///
         ///     AggressiveOptimization will tell the JIT to spend more time during compilation generating better code
         /// </summary>
@@ -178,8 +178,7 @@ namespace MBBSEmu.CPU
 
             //These two values are the final values popped off on the routine's last RETF
             //Seeing a ushort.max for CS and IP tells the routine it's now done
-            Push(ushort.MaxValue);
-            Push(ushort.MaxValue);
+            Push(uint.MaxValue);
         }
 
         /// <summary>
@@ -204,8 +203,7 @@ namespace MBBSEmu.CPU
 
             //These two values are the final values popped off on the routine's last RETF
             //Seeing a ushort.max for CS and IP tells the routine it's now done
-            Push(ushort.MaxValue);
-            Push(ushort.MaxValue);
+            Push(uint.MaxValue);
 
             InstructionCounter = 0;
         }
@@ -230,6 +228,23 @@ namespace MBBSEmu.CPU
         }
 
         /// <summary>
+        ///     Pops a DWord from the Stack and increments the Stack Pointer
+        /// </summary>
+        /// <returns></returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public uint PopDWord()
+        {
+            var value = Memory.GetDWord(Registers.SS, Registers.SP);
+#if DEBUG
+            if (_showDebug)
+                _logger.Debug($"Popped {value:X8} from {Registers.SP:X4}");
+#endif
+
+            Registers.SP += 4;
+            return value;
+        }
+
+        /// <summary>
         ///     Pushes a Word to the Stack and decrements the Stack Pointer
         /// </summary>
         /// <param name="value"></param>
@@ -244,6 +259,22 @@ namespace MBBSEmu.CPU
                 _logger.Debug($"Pushed {value:X4} to {Registers.SP:X4}");
 #endif
 
+        }
+
+        /// <summary>
+        ///     Pushes a DWord to the Stack and decrements the Stack Pointer
+        /// </summary>
+        /// <param name="value"></param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Push(uint value)
+        {
+            Registers.SP -= 4;
+            Memory.SetDWord(Registers.SS, Registers.SP, value);
+
+#if DEBUG
+            if (_showDebug)
+                _logger.Debug($"Pushed {value:X8} to {Registers.SP:X4}");
+#endif
         }
 
         /// <summary>
@@ -277,8 +308,8 @@ namespace MBBSEmu.CPU
             //  Debugger.Break();
 
             //Show Debugging
-            //_showDebug = true
-            //_showDebug = Registers.CS == 0x12 && Registers.IP >= 0x4E3 && Registers.IP <= 0x69A;
+            //_showDebug = true;
+            //_showDebug = Registers.CS == 47 && Registers.IP >= 0 && Registers.IP <= 0x41;
             //_showDebug = (Registers.CS == 0x6 && Registers.IP >= 0x352A && Registers.IP <= 0x3562);
 
             if (_showDebug)
@@ -346,6 +377,9 @@ namespace MBBSEmu.CPU
                 case Mnemonic.Loope:
                     Op_Loope();
                     return;
+                case Mnemonic.Loopne:
+                    Op_Loopne();
+                    return;
                 case Mnemonic.Iret:
                     Op_Iret();
                     return;
@@ -355,10 +389,15 @@ namespace MBBSEmu.CPU
                 case Mnemonic.Nop:
                 case Mnemonic.In:
                 case Mnemonic.Out:
+                    break;
                 case Mnemonic.Hlt: //Halt CPU until interrupt, there are none so keep going
+                    Registers.Halt = true;
                     break;
                 case Mnemonic.Clc:
                     Op_Clc();
+                    break;
+                case Mnemonic.Stc:
+                    Op_Stc();
                     break;
                 case Mnemonic.Cwd:
                     Op_Cwd();
@@ -395,6 +434,9 @@ namespace MBBSEmu.CPU
                     break;
                 case Mnemonic.Cmp:
                     Op_Cmp();
+                    break;
+                case Mnemonic.Cmpsb:
+                    Op_Cmpsb();
                     break;
                 case Mnemonic.Sub:
                     Op_Sub();
@@ -542,6 +584,9 @@ namespace MBBSEmu.CPU
                 case Mnemonic.Pushf:
                     Op_Pushf();
                     break;
+                case Mnemonic.Pushfd:
+                    Op_Pushfd();
+                    break;
                 case Mnemonic.Fadd:
                     Op_Fadd();
                     break;
@@ -588,11 +633,17 @@ namespace MBBSEmu.CPU
                 case Mnemonic.Popf:
                     Op_Popf();
                     break;
+                case Mnemonic.Popfd:
+                    Op_Popfd();
+                    break;
                 case Mnemonic.Fsubp:
                     Op_Fsubp();
                     break;
                 case Mnemonic.Fchs:
                     Op_Fchs();
+                    break;
+                case Mnemonic.Movsb:
+                    Op_Movsb();
                     break;
                 case Mnemonic.Movsw:
                     Op_Movsw();
@@ -1079,7 +1130,12 @@ namespace MBBSEmu.CPU
         {
             switch (_currentInstruction.Op1Kind)
             {
-                case OpKind.Register:
+                case OpKind.Register when _currentOperationSize == 1:
+                    {
+                        Registers.SetValue(_currentInstruction.Op1Register, (byte)result);
+                        return;
+                    }
+                case OpKind.Register when _currentOperationSize == 2:
                     {
                         Registers.SetValue(_currentInstruction.Op1Register, result);
                         return;
@@ -1126,7 +1182,7 @@ namespace MBBSEmu.CPU
         [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Cwd()
         {
-            Registers.DX = Registers.AX.IsBitSet(15) ? 0xFFFF : 0x0000;
+            Registers.DX = (ushort)(Registers.AX.IsBitSet(15) ? 0xFFFF : 0x0000);
         }
 
 
@@ -1223,6 +1279,9 @@ namespace MBBSEmu.CPU
 
         [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Clc() => Registers.F = Registers.F.ClearFlag((ushort)EnumFlags.CF);
+
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Stc() => Registers.F = Registers.F.SetFlag((ushort)EnumFlags.CF);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void Op_Or()
@@ -1458,16 +1517,22 @@ namespace MBBSEmu.CPU
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
             var source = GetOperandValueUInt8(_currentInstruction.Op1Kind, EnumOperandType.Source);
 
+            source &= 0x1F;
+
             unchecked
             {
-                var result = (byte)(destination >> (sbyte)source);
+                // in order to inspect bits lost during shift when computing the carry flag, we
+                // extend the size of the operation first by shifting left and then shifting right.
+                // So result becomes 0xDDLL where DD is the value and LL are the lost bits
+                var uresult = (ushort)((((ushort)destination) << 8) >> source);
+                Flags_EvaluateCarry(EnumArithmeticOperation.ShiftArithmeticRight, (byte)(uresult & 0x80));
 
-                //Maintain Sign Bit
+                var result = (byte)(uresult >> 8);
+                // maintain sign bit
                 if (destination.IsNegative())
-                    result.SetFlag(1 << 7);
+                    result |= 0x80;
 
-                Flags_EvaluateCarry(EnumArithmeticOperation.Subtraction, result, destination);
-                Flags_EvaluateOverflow(EnumArithmeticOperation.Subtraction, result, destination, source);
+                Flags_EvaluateOverflow(EnumArithmeticOperation.ShiftArithmeticRight, result, destination, source);
                 Flags_EvaluateSignZero(result);
                 return result;
             }
@@ -1479,16 +1544,22 @@ namespace MBBSEmu.CPU
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
             var source = GetOperandValueUInt16(_currentInstruction.Op1Kind, EnumOperandType.Source);
 
+            source &= 0x1F;
+
             unchecked
             {
-                var result = (ushort)(destination >> source);
+                // in order to inspect bits lost during shift when computing the carry flag, we
+                // extend the size of the operation first by shifting left and then shifting right.
+                // So result becomes 0xDDDDLLLL where DDDD is the value and LLLL are the lost bits
+                var uresult = (uint)((((uint)destination) << 16) >> source);
+                Flags_EvaluateCarry(EnumArithmeticOperation.ShiftArithmeticRight, (ushort)(uresult & 0x8000));
 
-                //Maintain Sign Bit
+                var result = (ushort)(uresult >> 16);
+                // maintain sign bit
                 if (destination.IsNegative())
-                    result.SetFlag(1 << 15);
+                    result |= 0x8000;
 
-                Flags_EvaluateCarry(EnumArithmeticOperation.Subtraction, result, destination);
-                Flags_EvaluateOverflow(EnumArithmeticOperation.Subtraction, result, destination, source);
+                Flags_EvaluateOverflow(EnumArithmeticOperation.ShiftArithmeticRight, result, destination, source);
                 Flags_EvaluateSignZero(result);
                 return result;
             }
@@ -1513,11 +1584,18 @@ namespace MBBSEmu.CPU
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
             var source = GetOperandValueUInt8(_currentInstruction.Op1Kind, EnumOperandType.Source);
 
+            source &= 0x1F;
+
             unchecked
             {
-                var result = (byte)(destination >> (sbyte)source);
-                Flags_EvaluateCarry(EnumArithmeticOperation.Subtraction, result, destination);
-                Flags_EvaluateOverflow(EnumArithmeticOperation.Subtraction, result, destination, source);
+                // in order to inspect bits lost during shift when computing the carry flag, we
+                // extend the size of the operation first by shifting left and then shifting right.
+                // So result becomes 0xDDLL where DD is the value and LL are the lost bits
+                var uresult = (ushort)((((ushort)destination) << 8) >> source);
+                Flags_EvaluateCarry(EnumArithmeticOperation.ShiftRight, (byte)(uresult & 0x80));
+
+                var result = (byte)(uresult >> 8);
+                Flags_EvaluateOverflow(EnumArithmeticOperation.ShiftRight, result, destination, source);
                 Flags_EvaluateSignZero(result);
                 return result;
             }
@@ -1529,11 +1607,18 @@ namespace MBBSEmu.CPU
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
             var source = GetOperandValueUInt16(_currentInstruction.Op1Kind, EnumOperandType.Source);
 
+            source &= 0x1F;
+
             unchecked
             {
-                var result = (ushort)(destination >> source);
-                Flags_EvaluateCarry(EnumArithmeticOperation.Subtraction, result, destination);
-                Flags_EvaluateOverflow(EnumArithmeticOperation.Subtraction, result, destination, source);
+                // in order to inspect bits lost during shift when computing the carry flag, we
+                // extend the size of the operation first by shifting left and then shifting right.
+                // So result becomes 0xDDDDLLLL where DDDD is the value and LLLL are the lost bits
+                var uresult = (uint)((((uint)destination) << 16) >> source);
+                Flags_EvaluateCarry(EnumArithmeticOperation.ShiftRight, (ushort)(uresult & 0x8000));
+
+                var result = (ushort)(uresult >> 16);
+                Flags_EvaluateOverflow(EnumArithmeticOperation.ShiftRight, result, destination, source);
                 Flags_EvaluateSignZero(result);
                 return result;
             }
@@ -1559,11 +1644,15 @@ namespace MBBSEmu.CPU
             var destination = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination);
             var source = GetOperandValueUInt8(_currentInstruction.Op1Kind, EnumOperandType.Source);
 
+            source &= 0x1F;
+
             unchecked
             {
-                var result = (byte)(destination << (sbyte)source);
-                Flags_EvaluateCarry(EnumArithmeticOperation.Addition, result, destination, source);
-                Flags_EvaluateOverflow(EnumArithmeticOperation.Addition, result, destination, source);
+                var uresult = (ushort)(destination << (sbyte)source);
+                Flags_EvaluateCarry(EnumArithmeticOperation.ShiftLeft, (ushort)(uresult & 0x100));
+
+                var result = (byte)uresult;
+                Flags_EvaluateOverflow(EnumArithmeticOperation.ShiftLeft, result, destination, source);
                 Flags_EvaluateSignZero(result);
                 return result;
             }
@@ -1575,11 +1664,15 @@ namespace MBBSEmu.CPU
             var destination = GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination);
             var source = GetOperandValueUInt16(_currentInstruction.Op1Kind, EnumOperandType.Source);
 
+            source &= 0x1F;
+
             unchecked
             {
-                var result = (ushort)(destination << source);
-                Flags_EvaluateCarry(EnumArithmeticOperation.Addition, result, destination, source);
-                Flags_EvaluateOverflow(EnumArithmeticOperation.Addition, result, destination, source);
+                var uresult = (uint)(destination << source);
+                Flags_EvaluateCarry(EnumArithmeticOperation.ShiftLeft, uresult & 0x1_0000);
+
+                var result = (ushort)uresult;
+                Flags_EvaluateOverflow(EnumArithmeticOperation.ShiftLeft, result, destination, source);
                 Flags_EvaluateSignZero(result);
                 return result;
             }
@@ -1591,11 +1684,15 @@ namespace MBBSEmu.CPU
             var destination = GetOperandValueUInt32(_currentInstruction.Op0Kind, EnumOperandType.Destination);
             var source = GetOperandValueUInt16(_currentInstruction.Op1Kind, EnumOperandType.Source);
 
+            source &= 0x1F;
+
             unchecked
             {
-                var result = destination << source;
-                Flags_EvaluateCarry(EnumArithmeticOperation.Addition, result, destination, source);
-                Flags_EvaluateOverflow(EnumArithmeticOperation.Addition, result, destination, source);
+                var uresult = (ulong)(((ulong)destination) << source);
+                Flags_EvaluateCarry(EnumArithmeticOperation.ShiftLeft, (uresult & 0x1_0000_0000) != 0 ? 1u : 0u);
+
+                var result = (uint)uresult;
+                Flags_EvaluateOverflow(EnumArithmeticOperation.ShiftLeft, result, destination, source);
                 Flags_EvaluateSignZero(result);
                 return result;
             }
@@ -1683,24 +1780,18 @@ namespace MBBSEmu.CPU
         [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Stosw()
         {
-        stosw:
-            Memory.SetWord(Registers.ES, Registers.DI, Registers.AX);
+            Repeat(() => {
+                Memory.SetWord(Registers.ES, Registers.DI, Registers.AX);
 
-            if (Registers.F.IsFlagSet((ushort)EnumFlags.DF))
-            {
-                Registers.DI -= 2;
-            }
-            else
-            {
-                Registers.DI += 2;
-            }
-
-            if (_currentInstruction.HasRepPrefix && Registers.CX > 0)
-            {
-                Registers.CX--;
-                goto stosw;
-            }
-
+                if (Registers.F.IsFlagSet((ushort)EnumFlags.DF))
+                {
+                    Registers.DI -= 2;
+                }
+                else
+                {
+                    Registers.DI += 2;
+                }
+            });
         }
 
         [MethodImpl(OpcodeCompilerOptimizations)]
@@ -2502,8 +2593,22 @@ namespace MBBSEmu.CPU
                     Registers.SetValue(_currentInstruction.Op0Register, Pop());
                     break;
                 case OpKind.Register when _currentOperationSize == 4:
-                    Registers.SetValue(_currentInstruction.Op0Register, (uint)(Pop() | (Pop() << 16)));
+                    Registers.SetValue(_currentInstruction.Op0Register, PopDWord());
                     break;
+                case OpKind.Memory when _currentOperationSize == 2:
+                    {
+                        Memory.SetWord(Registers.GetValue(_currentInstruction.MemorySegment),
+                            GetOperandOffset(_currentInstruction.Op0Kind),
+                            Pop());
+                        return;
+                    }
+                case OpKind.Memory when _currentOperationSize == 4:
+                    {
+                        Memory.SetDWord(Registers.GetValue(_currentInstruction.MemorySegment),
+                            GetOperandOffset(_currentInstruction.Op0Kind),
+                            PopDWord());
+                        return;
+                    }
                 default:
                     throw new ArgumentOutOfRangeException($"Unknown POP: {_currentInstruction.Op0Kind}");
             }
@@ -2530,11 +2635,7 @@ namespace MBBSEmu.CPU
 
                 //32Bit
                 case -4:
-                    {
-                        var valueToPush = GetOperandValueUInt32(_currentInstruction.Op0Kind, EnumOperandType.Destination);
-                        Push((ushort)(valueToPush >> 16));
-                        Push((ushort)valueToPush);
-                    }
+                    Push(GetOperandValueUInt32(_currentInstruction.Op0Kind, EnumOperandType.Destination));
                     return;
                 default:
                     throw new Exception(
@@ -2584,9 +2685,9 @@ namespace MBBSEmu.CPU
                     }
                 case OpKind.Memory when _currentOperationSize == 4:
                     {
-                        Memory.SetArray(Registers.GetValue(_currentInstruction.MemorySegment),
+                        Memory.SetDWord(Registers.GetValue(_currentInstruction.MemorySegment),
                             GetOperandOffset(_currentInstruction.Op0Kind),
-                            BitConverter.GetBytes(GetOperandValueUInt32(_currentInstruction.Op1Kind, EnumOperandType.Source)));
+                            GetOperandValueUInt32(_currentInstruction.Op1Kind, EnumOperandType.Source));
                         return;
                     }
 
@@ -2613,16 +2714,28 @@ namespace MBBSEmu.CPU
                         var pointer = Memory.GetPointer(Registers.GetValue(_currentInstruction.MemorySegment), offset);
                         Registers.CS = pointer.Segment;
                         Registers.IP = pointer.Offset;
-                        break;
-                    }
-                case OpKind.FarBranch16 when _currentInstruction.FarBranchSelector <= 0x0F00:
-                    {
-                        //Far call to another Segment
-                        Push(Registers.CS);
-                        Push((ushort)(Registers.IP + _currentInstruction.Length));
 
-                        Registers.CS = _currentInstruction.FarBranchSelector;
-                        Registers.IP = _currentInstruction.FarBranch16;
+#if DEBUG
+                        if(_showDebug)
+                            _logger.Info($"CALL {Registers.CS}:{Registers.IP}");
+#endif
+
+                        //Loaded an Exported Function Delegate from Memory
+                        if (Registers.CS > 0xFF00)
+                        {
+                            var ipBeforeCall = Registers.IP;
+
+                            _invokeExternalFunctionDelegate(Registers.CS,
+                                Registers.IP);
+
+                            //Control Transfer occurred in the CALL, so we clean up the stack and return
+                            if (ipBeforeCall != Registers.IP)
+                                return;
+
+                            Registers.SetValue(Register.EIP, Pop());
+                            Registers.SetValue(Register.CS, Pop());
+                        }
+
                         break;
                     }
                 case OpKind.FarBranch16 when _currentInstruction.FarBranchSelector > 0xFF00:
@@ -2638,6 +2751,11 @@ namespace MBBSEmu.CPU
 
                         var ipBeforeCall = Registers.IP;
 
+#if DEBUG
+                        if (_showDebug)
+                            _logger.Info($"CALL {_currentInstruction.FarBranchSelector}:{_currentInstruction.Immediate16}");
+#endif
+
                         _invokeExternalFunctionDelegate(_currentInstruction.FarBranchSelector,
                             _currentInstruction.Immediate16);
 
@@ -2652,12 +2770,32 @@ namespace MBBSEmu.CPU
                         Registers.SetValue(Register.CS, Pop());
                         break;
                     }
+                case OpKind.FarBranch16:
+                    {
+                        //Far call to another Segment
+                        Push(Registers.CS);
+                        Push((ushort)(Registers.IP + _currentInstruction.Length));
+
+                        Registers.CS = _currentInstruction.FarBranchSelector;
+                        Registers.IP = _currentInstruction.FarBranch16;
+
+#if DEBUG
+                        if (_showDebug)
+                            _logger.Info($"CALL {Registers.CS}:{Registers.IP}");
+#endif
+                        break;
+                    }
                 case OpKind.NearBranch16:
                     {
                         //We push CS:IP to the stack
                         //Push the IP of the **NEXT** instruction to the stack
                         Push((ushort)(Registers.IP + _currentInstruction.Length));
                         Registers.IP = _currentInstruction.NearBranch16;
+
+#if DEBUG
+                        if (_showDebug)
+                            _logger.Info($"CALL {Registers.CS}:{Registers.IP}");
+#endif
                         break;
                     }
                 case OpKind.Memory:
@@ -2670,6 +2808,11 @@ namespace MBBSEmu.CPU
                             var destinationOffset =
                                 Memory.GetWord(Registers.GetValue(_currentInstruction.MemorySegment), offset);
                             Registers.IP = destinationOffset;
+
+#if DEBUG
+                            if (_showDebug)
+                                _logger.Info($"CALL {Registers.CS}:{Registers.IP}");
+#endif
 
                         }
                         else
@@ -2691,7 +2834,11 @@ namespace MBBSEmu.CPU
         [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Fld()
         {
-            var floatToLoad = GetOperandValueDouble(_currentInstruction.Op0Kind, EnumOperandType.Source);
+            var operandType = _currentInstruction.Op0Kind == OpKind.Register
+                ? EnumOperandType.Destination
+                : EnumOperandType.Source;
+
+            var floatToLoad = GetOperandValueDouble(_currentInstruction.Op0Kind, operandType);
 
             //Set Value as new ST(0)
             Registers.Fpu.PushStackTop();
@@ -2812,6 +2959,7 @@ namespace MBBSEmu.CPU
             {
                 1 => GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Destination),
                 2 => GetOperandValueUInt16(_currentInstruction.Op0Kind, EnumOperandType.Destination),
+                4 => GetOperandValueUInt32(_currentInstruction.Op0Kind, EnumOperandType.Destination),
                 _ => throw new Exception("Unsupported Operation Size")
             };
 
@@ -3156,23 +3304,40 @@ namespace MBBSEmu.CPU
         [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Stosb()
         {
-        stosb:
-            Memory.SetByte(Registers.ES, Registers.DI, Registers.AL);
+            Repeat(() => {
+                Memory.SetByte(Registers.ES, Registers.DI, Registers.AL);
 
-            if (Registers.F.IsFlagSet((ushort)EnumFlags.DF))
-            {
-                Registers.DI--;
-            }
-            else
-            {
-                Registers.DI++;
-            }
+                if (Registers.F.IsFlagSet((ushort)EnumFlags.DF))
+                {
+                    Registers.DI--;
+                }
+                else
+                {
+                    Registers.DI++;
+                }
+            });
+        }
 
-            if (_currentInstruction.HasRepPrefix && Registers.CX > 0)
-            {
-                Registers.CX--;
-                goto stosb;
-            }
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Cmpsb()
+        {
+            Repeat(() => {
+                var result = (byte)(Memory.GetByte(Registers.DS, Registers.SI) - Memory.GetByte(Registers.ES, Registers.DI));
+                Flags_EvaluateCarry(EnumArithmeticOperation.Subtraction, result);
+                Flags_EvaluateOverflow(EnumArithmeticOperation.Subtraction, result);
+                Flags_EvaluateSignZero(result);
+
+                if (Registers.F.IsFlagSet((ushort)EnumFlags.DF))
+                {
+                    Registers.DI--;
+                    Registers.SI--;
+                }
+                else
+                {
+                    Registers.DI++;
+                    Registers.SI++;
+                }
+            }, isRepeCompatible: true);
         }
 
         [MethodImpl(OpcodeCompilerOptimizations)]
@@ -3189,41 +3354,41 @@ namespace MBBSEmu.CPU
             }
         }
 
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
+        private void Op_Rep(Action action, bool isRepeCompatible = false)
+        {
+            while (Registers.CX != 0) { // TODO evaluate whether to use ECX or CX
+	            action.Invoke();
+                Registers.CX--;
+	            if ((_currentInstruction.HasRepePrefix && isRepeCompatible && !Registers.F.IsFlagSet((ushort)EnumFlags.ZF)) || (_currentInstruction.HasRepnePrefix && Registers.F.IsFlagSet((ushort)EnumFlags.ZF)))
+                    break;
+            }
+        }
+
         [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Scasb()
         {
-        scasb:
-            var destination = Registers.AL;
-            var source = Memory.GetByte(Registers.ES, Registers.DI);
+            Repeat(() => {
+                var destination = Registers.AL;
+                var source = Memory.GetByte(Registers.ES, Registers.DI);
 
-            unchecked
-            {
-                var result = (byte)(destination - source);
-                Flags_EvaluateCarry(EnumArithmeticOperation.Subtraction, result, destination);
-                Flags_EvaluateOverflow(EnumArithmeticOperation.Subtraction, result, destination, source);
-                Flags_EvaluateSignZero(result);
+                unchecked
+                {
+                    var result = (byte)(destination - source);
+                    Flags_EvaluateCarry(EnumArithmeticOperation.Subtraction, result, destination);
+                    Flags_EvaluateOverflow(EnumArithmeticOperation.Subtraction, result, destination, source);
+                    Flags_EvaluateSignZero(result);
 
-                if (Registers.F.IsFlagSet((ushort)EnumFlags.DF))
-                {
-                    Registers.DI--;
+                    if (Registers.F.IsFlagSet((ushort)EnumFlags.DF))
+                    {
+                        Registers.DI--;
+                    }
+                    else
+                    {
+                        Registers.DI++;
+                    }
                 }
-                else
-                {
-                    Registers.DI++;
-                }
-
-                if (_currentInstruction.HasRepnePrefix && Registers.CX > 0 && result != 0)
-                {
-                    Registers.CX--;
-                    goto scasb;
-                }
-
-                if (_currentInstruction.HasRepePrefix && Registers.CX > 0 && result == 0)
-                {
-                    Registers.CX--;
-                    goto scasb;
-                }
-            }
+            }, isRepeCompatible: true);
         }
 
         [MethodImpl(OpcodeCompilerOptimizations)]
@@ -3232,6 +3397,21 @@ namespace MBBSEmu.CPU
             Registers.CX--;
 
             if (Registers.F.IsFlagSet((ushort)EnumFlags.ZF) && Registers.CX != 0)
+            {
+                Registers.IP = GetOperandOffset(_currentInstruction.Op0Kind);
+                return;
+            }
+
+            //Continue with the next instruction
+            Registers.IP += (ushort)_currentInstruction.Length;
+        }
+
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Loopne()
+        {
+            Registers.CX--;
+
+            if (!Registers.F.IsFlagSet((ushort)EnumFlags.ZF) && Registers.CX != 0)
             {
                 Registers.IP = GetOperandOffset(_currentInstruction.Op0Kind);
                 return;
@@ -3396,10 +3576,13 @@ namespace MBBSEmu.CPU
         ///     Push Flags Register to Stack
         /// </summary>
         [MethodImpl(OpcodeCompilerOptimizations)]
-        private void Op_Pushf()
-        {
-            Push(Registers.F);
-        }
+        private void Op_Pushf() => Push(Registers.F);
+
+        /// <summary>
+        ///     Push Flags Register to Stack
+        /// </summary>
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Pushfd() => Push(Registers.EF);
 
         /// <summary>
         ///     Floating Point Addition (x87)
@@ -3648,32 +3831,60 @@ namespace MBBSEmu.CPU
             }
         }
 
+        [MethodImpl(OpcodeSubroutineCompilerOptimizations)]
+        private bool IsRepInstruction() => _currentInstruction.HasRepPrefix || _currentInstruction.HasRepnePrefix || _currentInstruction.HasRepePrefix;
+
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Repeat(Action action, bool isRepeCompatible = false)
+        {
+            if (IsRepInstruction())
+                Op_Rep(action, isRepeCompatible);
+            else
+                action.Invoke();
+        }
+
         /// <summary>
-        ///     Move data from String to String
+        ///     Move data from String to String. TODO we can probably optimize this to copy as a chunk
+        /// </summary>
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Movsb()
+        {
+            Repeat(() => {
+                Memory.SetByte(Registers.ES, Registers.DI, Memory.GetByte(Registers.DS, Registers.SI));
+
+                if (Registers.F.IsFlagSet((ushort)EnumFlags.DF))
+                {
+                    Registers.DI -= 1;
+                    Registers.SI -= 1;
+                }
+                else
+                {
+                    Registers.DI += 1;
+                    Registers.SI += 1;
+                }
+            });
+        }
+
+        /// <summary>
+        ///     Move data from String to String. TODO we can probably optimize this to copy as a chunk
         /// </summary>
         [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Movsw()
         {
-        movsw:
-            Memory.SetWord(Registers.ES, Registers.DI, Memory.GetWord(Registers.DS, Registers.SI));
+            Repeat(() => {
+                Memory.SetWord(Registers.ES, Registers.DI, Memory.GetWord(Registers.DS, Registers.SI));
 
-            if (Registers.F.IsFlagSet((ushort)EnumFlags.DF))
-            {
-                Registers.DI -= 2;
-                Registers.SI -= 2;
-            }
-            else
-            {
-                Registers.DI += 2;
-                Registers.SI += 2;
-            }
-
-            if (_currentInstruction.HasRepPrefix && Registers.CX > 0)
-            {
-                Registers.CX--;
-                goto movsw;
-            }
-
+                if (Registers.F.IsFlagSet((ushort)EnumFlags.DF))
+                {
+                    Registers.DI -= 2;
+                    Registers.SI -= 2;
+                }
+                else
+                {
+                    Registers.DI += 2;
+                    Registers.SI += 2;
+                }
+            });
         }
 
         /// <summary>
@@ -3689,7 +3900,7 @@ namespace MBBSEmu.CPU
                 4 => Op_Movsx_32(),
                 _ => throw new Exception("Unsupported Operation Size")
             };
-            
+
             WriteToDestination(result);
         }
 
@@ -3788,10 +3999,13 @@ namespace MBBSEmu.CPU
         ///     Pop from Stack into the Flags Register
         /// </summary>
         [MethodImpl(OpcodeCompilerOptimizations)]
-        private void Op_Popf()
-        {
-            Registers.F = Pop();
-        }
+        private void Op_Popf() => Registers.F = Pop();
+
+        /// <summary>
+        ///     Pop from Stack into the Flags Register
+        /// </summary>
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Popfd() => Registers.EF = PopDWord();
 
         [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Iret()
@@ -3855,7 +4069,7 @@ namespace MBBSEmu.CPU
             var count = GetOperandValueUInt8(_currentInstruction.Op2Kind, EnumOperandType.Count);
 
             //Make sure Count isn't > 32 bits
-            count %= 32;
+            count &= 0x1F;
 
             var result = destination << count;
             result |= (source >> count);
@@ -3895,7 +4109,10 @@ namespace MBBSEmu.CPU
             {
                 EnumArithmeticOperation.Addition => (source + destination) > byte.MaxValue,
                 EnumArithmeticOperation.Subtraction => result > destination,
-                EnumArithmeticOperation.ShiftLeft => !result.IsNegative() && destination.IsNegative(),
+                EnumArithmeticOperation.ShiftArithmeticLeft => result != 0,
+                EnumArithmeticOperation.ShiftArithmeticRight => result != 0,
+                EnumArithmeticOperation.ShiftLeft => result != 0,
+                EnumArithmeticOperation.ShiftRight => result != 0,
                 _ => throw new ArgumentOutOfRangeException(nameof(arithmeticOperation), arithmeticOperation,
                     "Unsupported Carry Flag Operation for Evaluation"),
             };
@@ -3925,7 +4142,10 @@ namespace MBBSEmu.CPU
             {
                 EnumArithmeticOperation.Addition => (source + destination) > ushort.MaxValue,
                 EnumArithmeticOperation.Subtraction => result > destination,
-                EnumArithmeticOperation.ShiftLeft => !result.IsNegative() && destination.IsNegative(),
+                EnumArithmeticOperation.ShiftArithmeticLeft => result != 0,
+                EnumArithmeticOperation.ShiftArithmeticRight => result != 0,
+                EnumArithmeticOperation.ShiftLeft => result != 0,
+                EnumArithmeticOperation.ShiftRight => result != 0,
                 _ => throw new ArgumentOutOfRangeException(nameof(arithmeticOperation), arithmeticOperation,
                     "Unsupported Carry Flag Operation for Evaluation")
             };
@@ -3955,7 +4175,10 @@ namespace MBBSEmu.CPU
             {
                 EnumArithmeticOperation.Addition => ((ulong)source + destination) > uint.MaxValue,
                 EnumArithmeticOperation.Subtraction => result > destination,
-                EnumArithmeticOperation.ShiftLeft => !result.IsNegative() && destination.IsNegative(),
+                EnumArithmeticOperation.ShiftArithmeticLeft => result != 0,
+                EnumArithmeticOperation.ShiftArithmeticRight => result != 0,
+                EnumArithmeticOperation.ShiftLeft => result != 0,
+                EnumArithmeticOperation.ShiftRight => result != 0,
                 _ => throw new ArgumentOutOfRangeException(nameof(arithmeticOperation), arithmeticOperation,
                     "Unsupported Carry Flag Operation for Evaluation")
             };
@@ -4019,6 +4242,31 @@ namespace MBBSEmu.CPU
                             setFlag = true;
                         }
 
+                        break;
+                    }
+                case EnumArithmeticOperation.ShiftArithmeticLeft:
+                case EnumArithmeticOperation.ShiftLeft:
+                    {
+                        if (source != 1)
+                            return;
+
+                        setFlag = result.IsFlagSet(0x80) ^ Registers.F.IsFlagSet((ushort)EnumFlags.CF);
+                        break;
+                    }
+                case EnumArithmeticOperation.ShiftArithmeticRight:
+                    {
+                        if (source != 1)
+                            return;
+
+                        setFlag = false;
+                        break;
+                    }
+                case EnumArithmeticOperation.ShiftRight:
+                    {
+                        if (source != 1)
+                            return;
+
+                        setFlag = destination.IsFlagSet(0x80);
                         break;
                     }
                 default:
@@ -4087,6 +4335,31 @@ namespace MBBSEmu.CPU
 
                         break;
                     }
+                case EnumArithmeticOperation.ShiftArithmeticLeft:
+                case EnumArithmeticOperation.ShiftLeft:
+                    {
+                        if (source != 1)
+                            return;
+
+                        setFlag = result.IsFlagSet(0x8000) ^ Registers.F.IsFlagSet((ushort)EnumFlags.CF);
+                        break;
+                    }
+                case EnumArithmeticOperation.ShiftArithmeticRight:
+                    {
+                        if (source != 1)
+                            return;
+
+                        setFlag = false;
+                        break;
+                    }
+                case EnumArithmeticOperation.ShiftRight:
+                    {
+                        if (source != 1)
+                            return;
+
+                        setFlag = destination.IsFlagSet(0x8000);
+                        break;
+                    }
                 default:
                     throw new ArgumentOutOfRangeException(nameof(arithmeticOperation), arithmeticOperation,
                         "Unsupported Carry Flag Operation for Evaluation");
@@ -4144,6 +4417,31 @@ namespace MBBSEmu.CPU
                             setFlag = true;
                         }
 
+                        break;
+                    }
+                case EnumArithmeticOperation.ShiftArithmeticLeft:
+                case EnumArithmeticOperation.ShiftLeft:
+                    {
+                        if (source != 1)
+                            return;
+
+                        setFlag = result.IsFlagSet(0x80000000) ^ Registers.F.IsFlagSet((ushort)EnumFlags.CF);
+                        break;
+                    }
+                case EnumArithmeticOperation.ShiftArithmeticRight:
+                    {
+                        if (source != 1)
+                            return;
+
+                        setFlag = false;
+                        break;
+                    }
+                case EnumArithmeticOperation.ShiftRight:
+                    {
+                        if (source != 1)
+                            return;
+
+                        setFlag = destination.IsFlagSet(0x80000000);
                         break;
                     }
                 default:
@@ -4246,6 +4544,10 @@ namespace MBBSEmu.CPU
                 Register.EBX => sizeof(uint),
                 Register.ECX => sizeof(uint),
                 Register.EDX => sizeof(uint),
+                Register.ESP => sizeof(uint),
+                Register.EBP => sizeof(uint),
+                Register.ESI => sizeof(uint),
+                Register.EDI => sizeof(uint),
                 _ => throw new ArgumentOutOfRangeException(nameof(register), register, null)
             };
         }

@@ -350,13 +350,16 @@ namespace MBBSEmu.Btrieve
         /// </summary>
         private bool StepFirst()
         {
-            // TODO consider grabbing data at the same time and prepopulating the cache
-            var cmd = GetSqliteCommand("SELECT id FROM data_t ORDER BY id LIMIT 1");
+            var cmd = GetSqliteCommand("SELECT id, data FROM data_t ORDER BY id LIMIT 1");
             using var reader = cmd.ExecuteReader();
 
-            Position = reader.Read() ? (uint)reader.GetInt32(0) : 0;
+            if (!reader.Read())
+                return false;
+
+            Position = (uint)reader.GetInt32(0);
+            GetAndCacheBtrieveRecord(Position, reader, ordinal: 1);
             reader.Close();
-            return Position > 0;
+            return true;
         }
 
         /// <summary>
@@ -364,8 +367,7 @@ namespace MBBSEmu.Btrieve
         /// </summary>
         private bool StepNext()
         {
-            // TODO consider grabbing data at the same time and prepopulating the cache
-            var cmd = GetSqliteCommand("SELECT id FROM data_t WHERE id > @position ORDER BY id LIMIT 1");
+            var cmd = GetSqliteCommand("SELECT id, data FROM data_t WHERE id > @position ORDER BY id LIMIT 1");
             cmd.Parameters.AddWithValue("@position", Position);
             using var reader = cmd.ExecuteReader();
             try
@@ -374,6 +376,7 @@ namespace MBBSEmu.Btrieve
                     return false;
 
                 Position = (uint)reader.GetInt32(0);
+                GetAndCacheBtrieveRecord(Position, reader, ordinal: 1);
                 return true;
             }
             finally
@@ -387,7 +390,7 @@ namespace MBBSEmu.Btrieve
         /// </summary>
         private bool StepPrevious()
         {
-            var cmd = GetSqliteCommand("SELECT id FROM data_t WHERE id < @position ORDER BY id DESC LIMIT 1");
+            var cmd = GetSqliteCommand("SELECT id, data FROM data_t WHERE id < @position ORDER BY id DESC LIMIT 1");
             cmd.Parameters.AddWithValue("@position", Position);
             using var reader = cmd.ExecuteReader();
             try
@@ -396,6 +399,7 @@ namespace MBBSEmu.Btrieve
                     return false;
 
                 Position = (uint)reader.GetInt32(0);
+                GetAndCacheBtrieveRecord(Position, reader, 1);
                 return true;
             }
             finally
@@ -409,11 +413,14 @@ namespace MBBSEmu.Btrieve
         /// </summary>
         private bool StepLast()
         {
-            // TODO consider grabbing data at the same time and prepopulating the cache
-            var cmd = GetSqliteCommand("SELECT id FROM data_t ORDER BY id DESC LIMIT 1");
+            var cmd = GetSqliteCommand("SELECT id, data FROM data_t ORDER BY id DESC LIMIT 1");
             using var reader = cmd.ExecuteReader();
 
-            Position = reader.Read() ? (uint)reader.GetInt32(0) : 0;
+            if (!reader.Read())
+                return false;
+
+            Position = (uint)reader.GetInt32(0);
+            GetAndCacheBtrieveRecord(Position, reader, 1);
             reader.Close();
             return Position > 0;
         }
@@ -423,6 +430,16 @@ namespace MBBSEmu.Btrieve
         /// </summary>
         /// <returns></returns>
         public byte[] GetRecord() => GetRecord(Position)?.Data;
+
+        private BtrieveRecord GetAndCacheBtrieveRecord(uint id, SqliteDataReader reader, int ordinal)
+        {
+            using var stream = reader.GetStream(ordinal);
+            var data = BtrieveUtil.ReadEntireStream(stream);
+
+            var record = new BtrieveRecord(id, data);
+            _cache[id] = record;
+            return record;
+        }
 
         /// <summary>
         ///     Returns the Record at the specified Offset, while also updating Position to match.
@@ -442,12 +459,7 @@ namespace MBBSEmu.Btrieve
                 if (!reader.Read())
                     return null;
 
-                using var stream = reader.GetStream(0);
-                var data = BtrieveUtil.ReadEntireStream(stream);
-
-                record = new BtrieveRecord(offset, data);
-                _cache[offset] = record;
-                return record;
+                return GetAndCacheBtrieveRecord(offset, reader, 0);
             }
             finally
             {
@@ -466,7 +478,7 @@ namespace MBBSEmu.Btrieve
         public bool Update(uint offset, byte[] recordData)
         {
             if (VariableLengthRecords && recordData.Length != RecordLength)
-                _logger.Warn($"Updating variable length record of {recordData.Length} bytes into {FullPath}");
+                _logger.Debug($"Updating variable length record of {recordData.Length} bytes into {FullPath}");
 
             if (!VariableLengthRecords && recordData.Length != RecordLength)
             {
@@ -602,10 +614,10 @@ namespace MBBSEmu.Btrieve
         ///     Inserts a new Btrieve Record.
         /// </summary>
         /// <return>Position of the newly inserted item, or 0 on failure</return>
-        public uint Insert(byte[] record)
+        public uint Insert(byte[] record, LogLevel logLevel)
         {
             if (VariableLengthRecords && record.Length != RecordLength)
-                _logger.Warn($"Inserting variable length record of {record.Length} bytes into {FullPath}");
+                _logger.Debug($"Inserting variable length record of {record.Length} bytes into {FullPath}");
 
             if (!VariableLengthRecords && record.Length != RecordLength)
             {
@@ -652,7 +664,7 @@ namespace MBBSEmu.Btrieve
             }
             catch (SqliteException ex)
             {
-                _logger.Warn(ex, $"{FullPath}: Failed to insert record because {ex.Message}");
+                _logger.Log(logLevel, $"{FullPath}: Failed to insert record because {ex.Message}", ex);
                 transaction.Rollback();
                 return 0;
             }
@@ -665,7 +677,7 @@ namespace MBBSEmu.Btrieve
             }
             catch (Exception ex)
             {
-                _logger.Warn(ex, $"Failed to commit during insert: {ex.Message}");
+                _logger.Log(logLevel, $"Failed to commit during insert: {ex.Message}");
                 transaction.Rollback();
                 queryResult = 0;
             }

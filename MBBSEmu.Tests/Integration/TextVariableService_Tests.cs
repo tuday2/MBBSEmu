@@ -24,7 +24,7 @@ namespace MBBSEmu.Tests.Integration
         {
             ExecuteTest((session, host) => {
                 var textVariableService = _serviceResolver.GetService<ITextVariableService>();
-                var sessionVariables = new Dictionary<string, TextVariable.TextVariableValueDelegate>
+                var sessionVariables = new Dictionary<string, TextVariableValue.TextVariableValueDelegate>
                 {
                     {"CHANNEL", () => "0"}, {"USERID", () => "TestUsername"}
                 };
@@ -44,7 +44,7 @@ namespace MBBSEmu.Tests.Integration
         {
             ExecuteTest((session, host) => {
                 var textVariableService = _serviceResolver.GetService<ITextVariableService>();
-                var sessionVariables = new Dictionary<string, TextVariable.TextVariableValueDelegate>
+                var sessionVariables = new Dictionary<string, TextVariableValue.TextVariableValueDelegate>
                 {
                     {"CHANNEL", () => "0"}, {"USERID", () => "TestUsername"}
                 };
@@ -64,7 +64,7 @@ namespace MBBSEmu.Tests.Integration
         {
             ExecuteTest((session, host) => {
                 var textVariableService = _serviceResolver.GetService<ITextVariableService>();
-                var sessionVariables = new Dictionary<string, TextVariable.TextVariableValueDelegate>
+                var sessionVariables = new Dictionary<string, TextVariableValue.TextVariableValueDelegate>
                 {
                     {"CHANNEL", () => "0"}, {"USERID", () => "TestUsername"}
                 };
@@ -84,7 +84,7 @@ namespace MBBSEmu.Tests.Integration
         {
             ExecuteTest((session, host) => {
                 var textVariableService = _serviceResolver.GetService<ITextVariableService>();
-                var sessionVariables = new Dictionary<string, TextVariable.TextVariableValueDelegate>
+                var sessionVariables = new Dictionary<string, TextVariableValue.TextVariableValueDelegate>
                 {
                     {"CHANNEL", () => "0"}, {"USERID", () => "TestUsername"}
                 };
@@ -96,6 +96,26 @@ namespace MBBSEmu.Tests.Integration
                 var parsedText = textVariableService.Parse(dataToSendSpan, sessionVariables);
 
                 Assert.Equal("Random Text ... 0 ... The End", Encoding.ASCII.GetString(parsedText));
+            });
+        }
+
+        [Fact]
+        public void TextVariableServiceUnknownNoJus()
+        {
+            ExecuteTest((session, host) => {
+                var textVariableService = _serviceResolver.GetService<ITextVariableService>();
+                var sessionVariables = new Dictionary<string, TextVariableValue.TextVariableValueDelegate>
+                {
+                    {"CHANNEL", () => "0"}, {"USERID", () => "TestUsername"}
+                };
+
+                //Send string to be parsed - Format: No Justification, No Padding
+                var variableText = Encoding.ASCII.GetBytes("Random Text ... N.XXX ... The End");
+                var dataToSendSpan = new ReadOnlySpan<byte>(variableText);
+
+                var parsedText = textVariableService.Parse(dataToSendSpan, sessionVariables);
+
+                Assert.Equal("Random Text ... UNKNOWN VARIABLE ... The End", Encoding.ASCII.GetString(parsedText));
             });
         }
     }

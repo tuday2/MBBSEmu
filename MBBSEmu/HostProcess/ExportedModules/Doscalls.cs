@@ -4,6 +4,7 @@ using MBBSEmu.IO;
 using MBBSEmu.Memory;
 using MBBSEmu.Module;
 using MBBSEmu.Session;
+using MBBSEmu.TextVariables;
 using NLog;
 using System;
 using System.Text;
@@ -26,8 +27,8 @@ namespace MBBSEmu.HostProcess.ExportedModules
             base.Dispose();
         }
 
-        internal Doscalls(IClock clock, ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary) : base(
-            clock, logger, configuration, fileUtility, globalCache, module, channelDictionary)
+        internal Doscalls(IClock clock, ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary, ITextVariableService textVariableService) : base(
+            clock, logger, configuration, fileUtility, globalCache, module, channelDictionary, textVariableService)
         {
         }
 
@@ -98,7 +99,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
 
             var allocatedSegment = (ushort) (DosSegmentBase + DosSegmentOffset);
 
-            Module.Memory.AddSegment(allocatedSegment);
+            Module.ProtectedMemory.AddSegment(allocatedSegment);
             Module.Memory.SetWord(selectorPointer, allocatedSegment);
             DosSegmentOffset++;
             Registers.AX = 0;
@@ -143,7 +144,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             var moduleHandle = GetParameter(3);
 
             //I've only seen this in TW2002, and it passes in Code Segment
-            if (Module.Memory.HasSegment(moduleHandle))
+            if (Module.ProtectedMemory.HasSegment(moduleHandle))
             {
                 var moduleFileName = Module.MainModuleDll.File.FileName + '\0';
                 Module.Memory.SetArray(bufferPointer, Encoding.ASCII.GetBytes(moduleFileName));

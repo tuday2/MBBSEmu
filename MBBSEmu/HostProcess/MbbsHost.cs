@@ -14,6 +14,8 @@ using MBBSEmu.Session;
 using MBBSEmu.Session.Attributes;
 using MBBSEmu.Session.Enums;
 using MBBSEmu.Session.Rlogin;
+using MBBSEmu.TextVariables;
+using MBBSEmu.Util;
 using NLog;
 using System;
 using System.Collections.Generic;
@@ -21,7 +23,6 @@ using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
-using MBBSEmu.TextVariables;
 
 namespace MBBSEmu.HostProcess
 {
@@ -114,8 +115,9 @@ namespace MBBSEmu.HostProcess
 
         private readonly IAccountKeyRepository _accountKeyRepository;
         private readonly IAccountRepository _accountRepository;
+        private readonly ITextVariableService _textVariableService;
 
-        public MbbsHost(IClock clock, ILogger logger, IGlobalCache globalCache, IFileUtility fileUtility, IEnumerable<IHostRoutine> mbbsRoutines, AppSettings configuration, IEnumerable<IGlobalRoutine> globalRoutines, IAccountKeyRepository accountKeyRepository, IAccountRepository accountRepository, PointerDictionary<SessionBase> channelDictionary, ITextVariableService textVariableService)
+        public MbbsHost(IClock clock, ILogger logger, IGlobalCache globalCache, IFileUtility fileUtility, IEnumerable<IHostRoutine> mbbsRoutines, AppSettings configuration, IEnumerable<IGlobalRoutine> globalRoutines, IAccountKeyRepository accountKeyRepository, IAccountRepository accountRepository, PointerDictionary<SessionBase> channelDictionary, ITextVariableService textVariableService, IMessagingCenter messagingCenter)
         {
             Logger = logger;
             Clock = clock;
@@ -127,7 +129,8 @@ namespace MBBSEmu.HostProcess
             _channelDictionary = channelDictionary;
             _accountKeyRepository = accountKeyRepository;
             _accountRepository = accountRepository;
-            var textVariableServiceLocal = textVariableService;
+            _textVariableService = textVariableService;
+            var _messagingCenter = messagingCenter;
 
             Logger.Info("Constructing MBBSEmu Host...");
 
@@ -145,16 +148,22 @@ namespace MBBSEmu.HostProcess
             }
 
             //Setup Text Variables
-            textVariableServiceLocal.SetVariable("SYSTEM_NAME", () => _configuration.BBSTitle);
-            textVariableServiceLocal.SetVariable("SYSTEM_COMPANY", () => _configuration.BBSCompanyName);
-            textVariableServiceLocal.SetVariable("SYSTEM_ADDRESS1", () => _configuration.BBSAddress1);
-            textVariableServiceLocal.SetVariable("SYSTEM_ADDRESS2", () => _configuration.BBSAddress2);
-            textVariableServiceLocal.SetVariable("SYSTEM_PHONE", () => _configuration.BBSDataPhone);
-            textVariableServiceLocal.SetVariable("NUMBER_OF_LINES", () => _configuration.BBSChannels.ToString());
-            textVariableServiceLocal.SetVariable("DATE", () => Clock.Now.ToString("M/d/yy"));
-            textVariableServiceLocal.SetVariable("TIME", () => Clock.Now.ToString("t"));
-            textVariableServiceLocal.SetVariable("TOTAL_ACCOUNTS", () => _accountRepository.GetAccounts().Count().ToString());
-            textVariableServiceLocal.SetVariable("OTHERS_ONLINE", () => (GetUserSessions().Count - 1).ToString());
+            _textVariableService.SetVariable("SYSTEM_NAME", () => _configuration.BBSTitle);
+            _textVariableService.SetVariable("SYSTEM_COMPANY", () => _configuration.BBSCompanyName);
+            _textVariableService.SetVariable("SYSTEM_ADDRESS1", () => _configuration.BBSAddress1);
+            _textVariableService.SetVariable("SYSTEM_ADDRESS2", () => _configuration.BBSAddress2);
+            _textVariableService.SetVariable("SYSTEM_PHONE", () => _configuration.BBSDataPhone);
+            _textVariableService.SetVariable("NUMBER_OF_LINES", () => _configuration.BBSChannels.ToString());
+            _textVariableService.SetVariable("DATE", () => Clock.Now.ToString("M/d/yy"));
+            _textVariableService.SetVariable("TIME", () => Clock.Now.ToString("t"));
+            _textVariableService.SetVariable("TOTAL_ACCOUNTS", () => _accountRepository.GetAccounts().Count().ToString());
+            _textVariableService.SetVariable("OTHERS_ONLINE", () => (GetUserSessions().Count - 1).ToString());
+            _textVariableService.SetVariable("REG_NUMBER", () => _configuration.GSBLBTURNO);
+
+            //Setup Message Subscribers
+            _messagingCenter.Subscribe<SysopGlobal, string>(this, EnumMessageEvent.EnableModule, (sender, moduleId) => { EnableModule(moduleId); });
+            _messagingCenter.Subscribe<SysopGlobal, string>(this, EnumMessageEvent.DisableModule, (sender, moduleId) => { DisableModule(moduleId); });
+            _messagingCenter.Subscribe<SysopGlobal>(this, EnumMessageEvent.Cleanup, (sender) => { _performCleanup = true; });
 
             Logger.Info("Constructed MBBSEmu Host!");
         }
@@ -165,7 +174,7 @@ namespace MBBSEmu.HostProcess
         public void Start(List<ModuleConfiguration> moduleConfigurations)
         {
             //Load Modules
-            foreach (var m in moduleConfigurations)
+            foreach (var m in moduleConfigurations.Where(m => m.ModuleEnabled))
                 AddModule(new MbbsModule(_fileUtility, Clock, Logger, m.ModuleIdentifier, m.ModulePath) { MenuOptionKey = m.MenuOptionKey });
 
             //Remove any modules that did not properly initialize
@@ -265,7 +274,7 @@ namespace MBBSEmu.HostProcess
 
                         //Check for Internal System Globals
                         if (_globalRoutines.Any(g =>
-                            g.ProcessCommand(session.InputCommand, session.Channel, _channelDictionary, _modules)))
+                            g.ProcessCommand(session.InputCommand, session.Channel, _channelDictionary, _modules, _moduleConfigurations)))
                         {
                             session.Status = 1;
                             session.InputBuffer.SetLength(0);
@@ -395,8 +404,13 @@ namespace MBBSEmu.HostProcess
             {
                 _modules.Remove(m);
 
-                foreach (var e in _exportedFunctions.Keys.Where(x => x.StartsWith(m)))
+                var exportedFunctionsToRemove = _exportedFunctions.Keys.Where(x => x.StartsWith(m)).ToList();
+
+                foreach (var e in exportedFunctionsToRemove)
+                {
+                    _exportedFunctions[e].Dispose();
                     _exportedFunctions.Remove(e);
+                }
             }
         }
 
@@ -417,6 +431,21 @@ namespace MBBSEmu.HostProcess
 
                     Run(m.ModuleIdentifier, routineEntryPoint, channel);
                 }
+            }
+        }
+
+        private void CallModuleRoutine(string routine, Action<MbbsModule> preRunCallback, MbbsModule module, ushort channel = ushort.MaxValue)
+        {
+            if (!module.MainModuleDll.EntryPoints.TryGetValue(routine, out var routineEntryPoint)) return;
+
+            if (routineEntryPoint.Segment != 0 && routineEntryPoint.Offset != 0)
+            {
+#if DEBUG
+                Logger.Info($"Calling {routine} on module {module.ModuleIdentifier} for channel {channel}");
+#endif
+                preRunCallback?.Invoke(module);
+
+                Run(module.ModuleIdentifier, routineEntryPoint, channel);
             }
         }
 
@@ -543,8 +572,8 @@ namespace MBBSEmu.HostProcess
         }
 
         /// <summary>
-        ///     Invokes routine registered as LONROU during MAJORBBS->REGISTER_MODULE() call on only
-        ///     the selected Rlogin module, specified by ModuleIdentifier.
+        ///     Invokes routine registered as LONROU during MAJORBBS->REGISTER_MODULE() call for
+        ///     all modules, and then enters module specified by ModuleIdentifier.
         ///
         ///     Executes on the given channel once after a user successfully logs in.
         /// </summary>
@@ -552,10 +581,7 @@ namespace MBBSEmu.HostProcess
         {
             session.OutputEnabled = false; // always disabled for RLogin
 
-            var entryPoint = session.CurrentModule.MainModuleDll.EntryPoints["lonrou"];
-
-            if (entryPoint != FarPtr.Empty)
-                Run(session.CurrentModule.ModuleIdentifier, entryPoint, session.Channel);
+            CallModuleRoutine("lonrou", preRunCallback: null, session.Channel);
 
             session.SessionState = EnumSessionState.EnteringModule;
             session.OutputEnabled = true;
@@ -895,9 +921,10 @@ namespace MBBSEmu.HostProcess
 
                 foreach (var seg in dll.File.SegmentTable)
                 {
+                    var originalOrdinal = seg.Ordinal;
                     seg.Ordinal += dll.SegmentOffset;
-                    module.Memory.AddSegment(seg);
-                    Logger.Debug($"({module.ModuleIdentifier}) Segment {seg.Ordinal} ({seg.Data.Length} bytes) loaded!");
+                    module.ProtectedMemory.AddSegment(seg);
+                    Logger.Debug($"({module.ModuleIdentifier}:{dll.File.FileName}:{originalOrdinal}) Segment {seg.Ordinal} ({seg.Data.Length} bytes) loaded!");
                 }
 
                 dll.StateCode = (short) (_modules.Count * 10 + i);
@@ -988,12 +1015,12 @@ namespace MBBSEmu.HostProcess
             {
                 _exportedFunctions[key] = exportedModule switch
                 {
-                    "MAJORBBS" => new Majorbbs(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary, _accountKeyRepository, _accountRepository),
-                    "GALGSBL" => new Galgsbl(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary),
-                    "DOSCALLS" => new Doscalls(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary),
-                    "GALME" => new Galme(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary),
-                    "PHAPI" => new Phapi(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary),
-                    "GALMSG" => new Galmsg(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary),
+                    "MAJORBBS" => new Majorbbs(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary, _accountKeyRepository, _accountRepository, _textVariableService),
+                    "GALGSBL" => new Galgsbl(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary, _textVariableService),
+                    "DOSCALLS" => new Doscalls(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary, _textVariableService),
+                    "GALME" => new Galme(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary, _textVariableService),
+                    "PHAPI" => new Phapi(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary, _textVariableService),
+                    "GALMSG" => new Galmsg(Clock, Logger, _configuration, _fileUtility, _globalCache, module, _channelDictionary, _textVariableService),
                     _ => throw new Exception($"Unknown Exported Library: {exportedModule}")
                 };
 
@@ -1030,7 +1057,7 @@ namespace MBBSEmu.HostProcess
             {
                 //Patch Segment 0 (PHAPI) to just RETF (0xCB)
                 dll.File.SegmentTable[0].Data[0] = 0xCB;
-                
+
                 foreach (var s in dll.File.SegmentTable)
                 {
                     if (s.RelocationRecords == null || s.RelocationRecords.Count == 0)
@@ -1185,14 +1212,59 @@ namespace MBBSEmu.HostProcess
             }
         }
 
-        private void ProcessNightlyCleanup()
+        private void EnableModule(string moduleId)
         {
-            if (_globalCache.ContainsKey("SYSOPGLOBAL-CLEANUP"))
+            var _moduleId = moduleId;
+            var moduleChange = _moduleConfigurations.FirstOrDefault(m => m.ModuleIdentifier.Equals(_moduleId, StringComparison.InvariantCultureIgnoreCase));
+
+            //stop host loop
+            _isRunning = false;
+
+            AddModule(new MbbsModule(_fileUtility, Clock, Logger, moduleChange.ModuleIdentifier, moduleChange.ModulePath) { MenuOptionKey = moduleChange.MenuOptionKey });
+
+            var moduleIndex = _moduleConfigurations.FindIndex(i => i.ModuleIdentifier.Equals(_moduleId, StringComparison.InvariantCultureIgnoreCase));
+            _moduleConfigurations[moduleIndex].ModuleEnabled = true;
+
+            //start host loop
+            _isRunning = true;
+        }
+
+        private void DisableModule(string moduleId)
+        {
+            var _moduleId = moduleId;
+            var moduleChange = _modules.FirstOrDefault(m => m.Value.ModuleIdentifier.Equals(_moduleId, StringComparison.InvariantCultureIgnoreCase));
+
+            if (_channelDictionary.Values.Where(session => session.SessionState == EnumSessionState.InModule).Any(channel => channel.CurrentModule.ModuleIdentifier == _moduleId))
             {
-                _globalCache.Remove("SYSOPGLOBAL-CLEANUP");
-                _performCleanup = true;
+                Logger.Warn($"(Sysop Command) Tried to disable {moduleId} while in use -- Wait until all users have exited module");
+                return;
             }
 
+            //stop host loop
+            _isRunning = false;
+
+            CallModuleRoutine("finrou", null, moduleChange.Value);
+            _modules.Remove(moduleChange.Value.ModuleIdentifier);
+
+            var exportedFunctionsToRemove = _exportedFunctions.Keys.Where(x => x.StartsWith(moduleChange.Value.ModuleIdentifier)).ToList();
+
+            foreach (var e in exportedFunctionsToRemove)
+            {
+                _exportedFunctions[e].Dispose();
+                _exportedFunctions.Remove(e);
+            }
+
+            var moduleIndex = _moduleConfigurations.FindIndex(i =>
+                i.ModuleIdentifier.Equals(_moduleId, StringComparison.InvariantCultureIgnoreCase));
+
+            _moduleConfigurations[moduleIndex].ModuleEnabled = false;
+
+            //start host loop
+            _isRunning = true;
+        }
+
+        private void ProcessNightlyCleanup()
+        {
             if (_performCleanup)
             {
                 _performCleanup = false;
@@ -1221,7 +1293,9 @@ namespace MBBSEmu.HostProcess
             foreach (var m in _modules.ToList())
             {
                 _modules.Remove(m.Value.ModuleIdentifier);
-                foreach (var e in _exportedFunctions.Keys.Where(x => x.StartsWith(m.Value.ModuleIdentifier)))
+                var exportedFunctionsToRemove = _exportedFunctions.Keys.Where(x => x.StartsWith(m.Value.ModuleIdentifier)).ToList();
+
+                foreach (var e in exportedFunctionsToRemove)
                 {
                     _exportedFunctions[e].Dispose();
                     _exportedFunctions.Remove(e);

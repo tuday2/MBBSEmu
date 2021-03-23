@@ -11,14 +11,14 @@ namespace MBBSEmu.Tests.CPU
         public void SWOSW_Test()
         {
             Reset();
-            mbbsEmuMemoryCore.AddSegment(2);
+            mbbsEmuProtectedModeMemoryCore.AddSegment(2);
             mbbsEmuCpuRegisters.AX = 0xFFFF;
             mbbsEmuCpuRegisters.DS = 2;
             mbbsEmuCpuRegisters.ES = 2;
             mbbsEmuCpuRegisters.DI = 0;
 
             var instructions = new Assembler(16);
-            
+
             instructions.stosw();
             CreateCodeSegment(instructions);
 
@@ -31,7 +31,7 @@ namespace MBBSEmu.Tests.CPU
         public void SWOSW_Rep_Test()
         {
             Reset();
-            mbbsEmuMemoryCore.AddSegment(2);
+            mbbsEmuProtectedModeMemoryCore.AddSegment(2);
             mbbsEmuCpuRegisters.AX = 0xFFFF;
             mbbsEmuCpuRegisters.DS = 2;
             mbbsEmuCpuRegisters.ES = 2;
@@ -46,15 +46,15 @@ namespace MBBSEmu.Tests.CPU
             mbbsEmuCpuCore.Tick();
 
             Assert.Equal(0xFFFF, mbbsEmuMemoryCore.GetWord(2,0));
-            Assert.Equal(0xFFFF, mbbsEmuMemoryCore.GetWord(2, 2));
-            Assert.Equal(0, mbbsEmuMemoryCore.GetWord(2, 4));
+            Assert.Equal(0, mbbsEmuMemoryCore.GetWord(2, 2));
+            Assert.Equal(0, mbbsEmuCpuRegisters.CX);
         }
 
         [Fact]
         public void SWOSW_Rep_DF_Test()
         {
             Reset();
-            mbbsEmuMemoryCore.AddSegment(2);
+            mbbsEmuProtectedModeMemoryCore.AddSegment(2);
             mbbsEmuCpuRegisters.AX = 0xFFFF;
             mbbsEmuCpuRegisters.DS = 2;
             mbbsEmuCpuRegisters.ES = 2;
@@ -68,9 +68,9 @@ namespace MBBSEmu.Tests.CPU
 
             mbbsEmuCpuCore.Tick();
 
-            Assert.Equal(0, mbbsEmuMemoryCore.GetWord(2, 0));
-            Assert.Equal(0xFFFF, mbbsEmuMemoryCore.GetWord(2, 2));
+            Assert.Equal(0, mbbsEmuMemoryCore.GetWord(2, 2));
             Assert.Equal(0xFFFF, mbbsEmuMemoryCore.GetWord(2, 4));
+            Assert.Equal(2, mbbsEmuCpuRegisters.DI);
         }
     }
 }

@@ -210,7 +210,7 @@ namespace MBBSEmu
                             {
                                 throw new ArgumentException("Console not supported on versions of Windows earlier than 8.0");
                             }
-                            
+
                             _isConsoleSession = true;
                             break;
                             }
@@ -227,7 +227,7 @@ namespace MBBSEmu
                 if (!string.IsNullOrEmpty(_exeFile))
                 {
                     var mzFile = new MZFile(_exeFile);
-                    var exe = new ExeRuntime(mzFile, null, _serviceResolver.GetService<IClock>(), _logger);
+                    var exe = new ExeRuntime(mzFile, _serviceResolver.GetService<IClock>(), _logger, _serviceResolver.GetService<IFileUtility>());
                     exe.Load();
                     exe.Run();
                     return;
@@ -293,8 +293,8 @@ namespace MBBSEmu
                 }
                 else if (_isModuleConfigFile)
                 {
-                    //Load Menu Option Keys - 35 total
-                    var menuOptionKeyList = "ABCDEFGHIJKLMNOPQRSTUVWYZ0123456789".ToCharArray().ToList(); //Exclude X for logoff
+                    var menuOptionKeys = new List<string>();
+                    var autoMenuOptionSeed = 1;
 
                     //Load Config File
                     var moduleConfiguration = new ConfigurationBuilder().SetBasePath(Directory.GetCurrentDirectory())
@@ -302,25 +302,28 @@ namespace MBBSEmu
 
                     foreach (var m in moduleConfiguration.GetSection("Modules").GetChildren())
                     {
-                        //Check for available MenuOptionKeys
-                        if (menuOptionKeyList.Count < 1)
+                        //Check to see if module is enabled
+                        var moduleEnabled = m["Enabled"] != "0";
+
+                        //Check for Non Character/Number in MenuOptionKey and Length of 2 or less
+                        if (!string.IsNullOrEmpty(m["MenuOptionKey"]) && !(m["MenuOptionKey"]).All(char.IsLetterOrDigit))
                         {
-                            _logger.Error($"Maximum module limit reached -- {m["Identifier"]} not loaded");
-                            continue;
+                            _logger.Error($"Invalid menu option key character (NOT A-Z or 0-9) for {m["Identifier"]}, auto assigning menu option key");
+                            m["MenuOptionKey"] = "";
                         }
 
-                        //Check for Non Character/Digit MenuOptionKey
-                        if (!string.IsNullOrEmpty(m["MenuOptionKey"]) && (!char.IsLetterOrDigit(m["MenuOptionKey"][0])))
+                        //Check MenuOptionKey is Length of 2 or less
+                        if (!string.IsNullOrEmpty(m["MenuOptionKey"]) && m["MenuOptionKey"].Length > 2)
                         {
-                            _logger.Error($"Invalid menu option key (NOT A-Z or 0-9) for {m["Identifier"]}, module not loaded");
-                            continue;
+                            _logger.Error($"Invalid menu option key length (MAX Length: 2) {m["Identifier"]}, auto assigning menu option key");
+                            m["MenuOptionKey"] = "";
                         }
 
                         //Check for duplicate MenuOptionKey
-                        if (!string.IsNullOrEmpty(m["MenuOptionKey"]) && _moduleConfigurations.Any(x => x.MenuOptionKey == m["MenuOptionKey"]))
+                        if (!string.IsNullOrEmpty(m["MenuOptionKey"]) && _moduleConfigurations.Any(x => x.MenuOptionKey == m["MenuOptionKey"]) && menuOptionKeys.Any(x => x.Equals(m["MenuOptionKey"])))
                         {
-                            _logger.Error($"Duplicate menu option key for {m["Identifier"]}, module not loaded");
-                            continue;
+                            _logger.Error($"Duplicate menu option key for {m["Identifier"]}, auto assigning menu option key");
+                            m["MenuOptionKey"] = "";
                         }
 
                         //Check for duplicate module in moduleConfig
@@ -330,20 +333,21 @@ namespace MBBSEmu
                             continue;
                         }
 
-                        //If MenuOptionKey, remove from allowable list
+                        //If MenuOptionKey, add to list
                         if (!string.IsNullOrEmpty(m["MenuOptionKey"]))
-                            menuOptionKeyList.Remove(char.Parse(m["MenuOptionKey"]));
+                            menuOptionKeys.Add(m["MenuOptionKey"]);
 
-                        //Check for missing MenuOptionKey, assign, remove from allowable list
+                        //Check for missing MenuOptionKey, assign, add to list
                         if (string.IsNullOrEmpty(m["MenuOptionKey"]))
                         {
-                            m["MenuOptionKey"] = menuOptionKeyList[0].ToString();
-                            menuOptionKeyList.RemoveAt(0);
+                            m["MenuOptionKey"] = autoMenuOptionSeed.ToString();
+                            autoMenuOptionSeed++;
+                            menuOptionKeys.Add(m["MenuOptionKey"]);
                         }
 
                         //Load Modules
                         _logger.Info($"Loading {m["Identifier"]}");
-                        _moduleConfigurations.Add(new ModuleConfiguration { ModuleIdentifier = m["Identifier"], ModulePath = m["Path"], MenuOptionKey = m["MenuOptionKey"] });
+                        _moduleConfigurations.Add(new ModuleConfiguration { ModuleIdentifier = m["Identifier"], ModulePath = m["Path"], MenuOptionKey = m["MenuOptionKey"], ModuleEnabled = moduleEnabled});
                     }
                 }
                 else
@@ -487,8 +491,8 @@ namespace MBBSEmu
             //Insert Into BBS Account Btrieve File
             var _accountBtrieve = _serviceResolver.GetService<IGlobalCache>().Get<BtrieveFileProcessor>("ACCBB-PROCESSOR");
             _accountBtrieve.DeleteAll();
-            _accountBtrieve.Insert(new UserAccount { userid = Encoding.ASCII.GetBytes("sysop"), psword = Encoding.ASCII.GetBytes("<<HASHED>>") }.Data);
-            _accountBtrieve.Insert(new UserAccount { userid = Encoding.ASCII.GetBytes("guest"), psword = Encoding.ASCII.GetBytes("<<HASHED>>") }.Data);
+            _accountBtrieve.Insert(new UserAccount { userid = Encoding.ASCII.GetBytes("sysop"), psword = Encoding.ASCII.GetBytes("<<HASHED>>") }.Data, LogLevel.Error);
+            _accountBtrieve.Insert(new UserAccount { userid = Encoding.ASCII.GetBytes("guest"), psword = Encoding.ASCII.GetBytes("<<HASHED>>") }.Data, LogLevel.Error);
 
             _logger.Info("Database Reset!");
         }

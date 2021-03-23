@@ -1,17 +1,16 @@
 using MBBSEmu.CPU;
 using MBBSEmu.Date;
 using MBBSEmu.Disassembler;
+using MBBSEmu.DOS.Structs;
 using MBBSEmu.HostProcess.ExecutionUnits;
 using MBBSEmu.HostProcess.ExportedModules;
 using MBBSEmu.IO;
 using MBBSEmu.Memory;
 using NLog;
-using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using MBBSEmu.DOS.Interrupts;
-using MBBSEmu.DOS.Structs;
+using System.Reflection;
 
 namespace MBBSEmu.Module
 {
@@ -37,6 +36,8 @@ namespace MBBSEmu.Module
         /// </summary>
         public IMemoryCore Memory;
 
+        public ProtectedModeMemoryCore ProtectedMemory;
+
         /// <summary>
         ///     The unique name of the module (same as the DLL name)
         /// </summary>
@@ -51,7 +52,6 @@ namespace MBBSEmu.Module
         ///     Menu Option Key of Module
         /// </summary>
         public string MenuOptionKey { get; set; }
-
 
         /// <summary>
         ///     Module MSG File
@@ -77,11 +77,6 @@ namespace MBBSEmu.Module
         ///     Routine definitions for functions registered via INITASK
         /// </summary>
         public PointerDictionary<RealTimeRoutine> TaskRoutines { get; set; }
-
-        /// <summary>
-        ///     Text Variable definitions for variables registered via REGISTER_VARIABLE
-        /// </summary>
-        public Dictionary<string, FarPtr> TextVariables { get; set; }
 
         /// <summary>
         ///     Global Command Handler Definitions for modules that register global commands
@@ -130,7 +125,7 @@ namespace MBBSEmu.Module
 
         /// <summary>
         ///     Constructor for MbbsModule
-        /// 
+        ///
         ///     Pass in an empty/blank moduleIdentifier for a Unit Test/Fake Module
         /// </summary>
         /// <param name="logger"></param>
@@ -138,15 +133,14 @@ namespace MBBSEmu.Module
         /// <param name="path"></param>
         /// <param name="memoryCore"></param>
         /// <param name="fileUtility"></param>
-        public MbbsModule(IFileUtility fileUtility, IClock clock, ILogger logger, string moduleIdentifier, string path = "", MemoryCore memoryCore = null)
+        public MbbsModule(IFileUtility fileUtility, IClock clock, ILogger logger, string moduleIdentifier, string path = "", ProtectedModeMemoryCore memoryCore = null)
         {
             _fileUtility = fileUtility;
             _logger = logger;
             _clock = clock;
-            
+
             ModuleIdentifier = moduleIdentifier;
             ModuleDlls = new List<MbbsDll>();
-
 
             //Sanitize and setup Path
             if (string.IsNullOrEmpty(path))
@@ -168,29 +162,13 @@ namespace MBBSEmu.Module
                 //Verify MDF File Exists
                 var mdfFile = fileUtility.FindFile(ModulePath, $"{ModuleIdentifier}.MDF");
                 var fullMdfFilePath = Path.Combine(ModulePath, mdfFile);
-                if (!System.IO.File.Exists(fullMdfFilePath))
+                if (!File.Exists(fullMdfFilePath))
                 {
                     throw new FileNotFoundException($"Unable to locate Module: {fullMdfFilePath}");
                 }
-
                 Mdf = new MdfFile(fullMdfFilePath);
-                var moduleDll = new MbbsDll(fileUtility, logger);
-                moduleDll.Load(Mdf.DLLFiles[0].Trim(), ModulePath);
-                ModuleDlls.Add(moduleDll);
 
-
-                if (Mdf.Requires.Count > 0)
-                {
-                    foreach (var r in Mdf.Requires)
-                    {
-                        var requiredDll = new MbbsDll(fileUtility, logger);
-                        if (requiredDll.Load(r.Trim(), ModulePath))
-                        {
-                            requiredDll.SegmentOffset = (ushort) (ModuleDlls.Sum(x => x.File.SegmentTable.Count) + 1);
-                            ModuleDlls.Add(requiredDll);
-                        }
-                    }
-                }
+                LoadModuleDll(Mdf.DLLFiles[0].Trim());
 
                 if (Mdf.MSGFiles.Count > 0)
                 {
@@ -206,16 +184,16 @@ namespace MBBSEmu.Module
             RtkickRoutines = new PointerDictionary<RealTimeRoutine>();
             RtihdlrRoutines = new PointerDictionary<RealTimeRoutine>();
             TaskRoutines = new PointerDictionary<RealTimeRoutine>();
-            TextVariables = new Dictionary<string, FarPtr>();
             GlobalCommandHandlers = new List<FarPtr>();
             ExportedModuleDictionary = new Dictionary<ushort, IExportedModule>(6);
             ExecutionUnits = new Queue<ExecutionUnit>(2);
-            
-            Memory = memoryCore ?? new MemoryCore();
+
+            Memory = memoryCore ?? new ProtectedModeMemoryCore(logger);
+            ProtectedMemory = (ProtectedModeMemoryCore)Memory;
 
             //Declare PSP Segment
             var psp = new PSPStruct { NextSegOffset = 0x9FFF, EnvSeg = 0xFFFF };
-            Memory.AddSegment(0x4000);
+            ProtectedMemory.AddSegment(0x4000);
             Memory.SetArray(0x4000, 0, psp.Data);
 
             Memory.AllocateVariable("Int21h-PSP", sizeof(ushort));
@@ -242,12 +220,15 @@ namespace MBBSEmu.Module
                     var initNonResidentName = dll.File.NonResidentNameTable.FirstOrDefault(x => x.Name.StartsWith("_INIT__"));
 
                     if (initNonResidentName == null)
-                        throw new Exception("Unable to locate _INIT__ entry in Resident Name Table");
+                    {
+                        _logger.Error($"Unable to locate _INIT__ entry in Resident Name Table for {dll.File.FileName}");
+                        continue;
+                    }
 
                     var initEntryPoint = dll.File.EntryTable.First(x => x.Ordinal == initNonResidentName.IndexIntoEntryTable);
-                    
+
                     initEntryPointPointer = new FarPtr((ushort) (initEntryPoint.SegmentNumber + dll.SegmentOffset), initEntryPoint.Offset);
-                    
+
                 }
                 else
                 {
@@ -292,12 +273,54 @@ namespace MBBSEmu.Module
             if (!ExecutionUnits.TryDequeue(out var executionUnit))
             {
                 _logger.Debug($"({ModuleIdentifier}) Exhausted execution Units, creating additional");
-                executionUnit = new ExecutionUnit(Memory, _clock, ExportedModuleDictionary, _logger, ModulePath);
+                executionUnit = new ExecutionUnit(Memory, _clock, _fileUtility, ExportedModuleDictionary, _logger, ModulePath);
             }
 
             var resultRegisters = executionUnit.Execute(entryPoint, channelNumber, simulateCallFar, bypassSetState, initialStackValues, initialStackPointer);
             ExecutionUnits.Enqueue(executionUnit);
             return resultRegisters;
+        }
+
+        /// <summary>
+        ///     Loads the specified DLL, and then inspects that DLLs Module Reference Table to import any additional
+        ///     references it might require recursively.
+        /// </summary>
+        /// <param name="dllToLoad"></param>
+        private void LoadModuleDll(string dllToLoad)
+        {
+            var requiredDll = new MbbsDll(_fileUtility, _logger);
+            if (!requiredDll.Load(dllToLoad, ModulePath))
+            {
+                _logger.Error($"Unable to load {dllToLoad}");
+                return;
+            }
+
+            requiredDll.SegmentOffset = (ushort)(ModuleDlls.Sum(x => x.File.SegmentTable.Count) + 1);
+            ModuleDlls.Add(requiredDll);
+
+            _logger.Info($"Loaded {dllToLoad}");
+
+            //Pull records from ModuleReferenceTable that aren't of References handled internally by the emulator
+            foreach (var import in ModuleDlls[0].File.ModuleReferenceTable
+                .Where(x => GetAllExportedModules().All(e => e != x.Name)).Select(x=> x.Name))
+            {
+                //Only load a dependency if it's not already loaded by a previous library
+                if (ModuleDlls.All(x => x.File.FileName.ToUpper().Split('.')[0] != import.ToUpper()))
+                    LoadModuleDll(import);
+            }
+        }
+
+        /// <summary>
+        ///     Returns a list of each Class which Implements IExportedModule
+        ///
+        ///     We use this to not try and import DLL references that are emulated internally
+        /// </summary>
+        /// <returns></returns>
+        private IEnumerable<string> GetAllExportedModules()
+        {
+            return Assembly.GetExecutingAssembly().GetTypes()
+                .Where(x => typeof(IExportedModule).IsAssignableFrom(x) && !x.IsInterface && !x.IsAbstract)
+                .Select(x => x.Name.ToUpper()).ToList();
         }
     }
 }

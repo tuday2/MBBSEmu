@@ -1,3 +1,4 @@
+using MBBSEmu.Extensions;
 using MBBSEmu.HostProcess;
 using MBBSEmu.HostProcess.ExportedModules;
 using MBBSEmu.HostProcess.Structs;
@@ -214,7 +215,7 @@ namespace MBBSEmu.Session
         /// </summary>
         public byte[] VDA { get; set; }
 
-        public Dictionary<string, TextVariable.TextVariableValueDelegate> SessionVariables;
+        public Dictionary<string, TextVariableValue.TextVariableValueDelegate> SessionVariables;
 
         private readonly ITextVariableService _textVariableService;
         protected readonly IMbbsHost _mbbsHost;
@@ -258,12 +259,24 @@ namespace MBBSEmu.Session
             InputBuffer = new MemoryStream(1024);
             InputCommand = new byte[] { 0x0 };
             VDA = new byte[Majorbbs.VOLATILE_DATA_SIZE];
-            SessionVariables = new Dictionary<string, TextVariable.TextVariableValueDelegate>
-            {
-                {"CHANNEL", () => Channel.ToString()}, {"USERID", () => Username}
-            };
-
             _enumSessionState = startingSessionState;
+            SessionVariables = new Dictionary<string, TextVariableValue.TextVariableValueDelegate>
+            {
+                {"CHANNEL", () => Channel.ToString()}, 
+                {"USERID", () => Username}, 
+                {"BAUD", () => UsrPtr.Baud.ToString() }, 
+                {"TIME_ONLINE", () => SessionTimer.Elapsed.ToString("hh\\:mm\\:ss") },
+                {"CREDITS", () => UsrAcc.creds.ToString() },
+                {"CREATION_DATE", () => UsrAcc.credat != 0 ? UsrAcc.credat.FromDosDate().ToShortDateString() : mbbsHost.Clock.Now.ToShortDateString()},
+                {"PAGE", () =>
+                    {
+                        var sessionInfo = _enumSessionState.GetSessionState();
+
+                        return sessionInfo.moduleSession ? CurrentModule.ModuleDescription : sessionInfo.UserOptionSelected;
+                    }
+                }
+            };
+            
             OnSessionStateChanged += (_, _) => mbbsHost.TriggerProcessing();
         }
 

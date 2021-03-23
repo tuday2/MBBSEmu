@@ -13,6 +13,7 @@ using MBBSEmu.Memory;
 using MBBSEmu.Module;
 using MBBSEmu.Session;
 using MBBSEmu.Session.Enums;
+using MBBSEmu.TextVariables;
 using MBBSEmu.Util;
 using NLog;
 using System;
@@ -58,6 +59,8 @@ namespace MBBSEmu.HostProcess.ExportedModules
 
         private AgentStruct _galacticommClientServerAgent;
 
+        private int findtvarValue;
+
         /// <summary>
         ///     Stores all active searches created via fnd1st
         /// </summary>
@@ -89,8 +92,8 @@ namespace MBBSEmu.HostProcess.ExportedModules
             base.Dispose();
         }
 
-        public Majorbbs(IClock clock, ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary, IAccountKeyRepository accountKeyRepository, IAccountRepository accountRepository) : base(
-            clock, logger, configuration, fileUtility, globalCache, module, channelDictionary)
+        public Majorbbs(IClock clock, ILogger logger, AppSettings configuration, IFileUtility fileUtility, IGlobalCache globalCache, MbbsModule module, PointerDictionary<SessionBase> channelDictionary, IAccountKeyRepository accountKeyRepository, IAccountRepository accountRepository, ITextVariableService textVariableService) : base(
+           clock, logger, configuration, fileUtility, globalCache, module, channelDictionary, textVariableService)
         {
             _accountKeyRepository = accountKeyRepository;
             _accountRepository = accountRepository;
@@ -157,7 +160,6 @@ namespace MBBSEmu.HostProcess.ExportedModules
             Module.Memory.AllocateVariable("VERSION", 5);
             Module.Memory.SetArray("VERSION", Encoding.ASCII.GetBytes("2.00"));
             Module.Memory.AllocateVariable("SYSCYC", FarPtr.Size);
-
             Module.Memory.AllocateVariable("NUMBYTS", sizeof(uint));
             Module.Memory.AllocateVariable("NUMFILS", sizeof(uint));
             Module.Memory.AllocateVariable("NUMBYTP", sizeof(uint));
@@ -168,7 +170,6 @@ namespace MBBSEmu.HostProcess.ExportedModules
             Module.Memory.SetPointer("FTGPTR", Module.Memory.GetVariablePointer("FTG"));
             Module.Memory.AllocateVariable("TSHMSG", 81); //universal global Tagspec Handler message
             Module.Memory.AllocateVariable("FTFSCB", FtfscbStruct.Size);
-
             Module.Memory.AllocateVariable("SV", SysvblStruct.Size);
             Module.Memory.AllocateVariable("EURMSK", 1);
             Module.Memory.SetByte("EURMSK", (byte)0x7F);
@@ -189,6 +190,10 @@ namespace MBBSEmu.HostProcess.ExportedModules
             Module.Memory.AllocateVariable("_8087", sizeof(ushort));
             Module.Memory.SetWord("_8087", 3);
             Module.Memory.AllocateVariable("UIDXRF", UidxrefStruct.Size, true);
+            Module.Memory.AllocateVariable("NTVARS", sizeof(ushort));
+            Module.Memory.SetWord("NTVARS", 1); //We're setting the 1 defaulted below for SYSTEM
+            Module.Memory.AllocateVariable("TXTVARS", TextvarStruct.Size * MaxTextVariables, true); //Up to 64 Text Variables per Module
+            Module.Memory.SetArray("TXTVARS", new TextvarStruct("SYSTEM", new FarPtr(Segment, 9000)).Data); //Set 1st var as SYSTEM variable reference with special pointer
 
             var ctypePointer = Module.Memory.AllocateVariable("CTYPE", 0x101);
 
@@ -523,6 +528,10 @@ namespace MBBSEmu.HostProcess.ExportedModules
                     return uidxrf;
                 case 600:
                     return tjoinrou;
+                case 861:
+                    return ntvars;
+                case 753:
+                    return txtvars;
             }
 
             if (offsetsOnly)
@@ -942,7 +951,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
                     galmalloc();
                     break;
                 case 615:
-                    fungetc();
+                    ungetc();
                     break;
                 case 230:
                     galfree();
@@ -1273,6 +1282,15 @@ namespace MBBSEmu.HostProcess.ExportedModules
                 case 905:
                     stzcat();
                     break;
+                case 1012:
+                    setmode();
+                    break;
+                case 327:
+                    gettime();
+                    break;
+                case 9000:
+                    txtvars_delegate();
+                    break;
                 default:
                     _logger.Error($"Unknown Exported Function Ordinal in MAJORBBS: {ordinal}:{Ordinals.MAJORBBS[ordinal]}");
                     throw new ArgumentOutOfRangeException($"Unknown Exported Function Ordinal in MAJORBBS: {ordinal}:{Ordinals.MAJORBBS[ordinal]}");
@@ -1299,7 +1317,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             var caseSensitive = GetParameterBool(2);
             var operation = (EnumBtrieveOperationCodes) GetParameter(3);
 
-            Registers.AX = anpbtv(recordPointer, caseSensitive, operation) ? 1 : 0;
+            Registers.AX = (ushort)(anpbtv(recordPointer, caseSensitive, operation) ? 1 : 0);
         }
 
         private bool anpbtv(FarPtr recordPointer, bool caseSensitive, EnumBtrieveOperationCodes operationCodes)
@@ -1352,15 +1370,13 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// </summary>
         private void alczer()
         {
-            var size = GetParameter(0);
+            galmalloc();
 
-            var allocatedMemory = Module.Memory.AllocateVariable(null, size);
+            if (Registers.GetPointer().IsNull())
+                throw new OutOfMemoryException("Module failed to allocate memory");
 
-#if DEBUG
-            _logger.Debug($"({Module.ModuleIdentifier}) Allocated {size} bytes starting at {allocatedMemory}");
-#endif
-
-            Registers.SetPointer(allocatedMemory);
+            // zero fill
+            Module.Memory.FillArray(Registers.GetPointer(), GetParameter(0), 0);
         }
 
         /// <summary>
@@ -1431,49 +1447,21 @@ namespace MBBSEmu.HostProcess.ExportedModules
         }
 
         /// <summary>
-        ///     Copies a string with a fixed length
+        ///     Copies a string with a fixed length - differs from strncpy in that it guarantees null
+        ///     termination.
         ///
-        ///     Signature: stzcpy(char *dest, char *source, int nbytes);
-        ///     Return: AX = Offset in Segment
-        ///             DX = Data Segment
+        ///     Signature: char *stzcpy(char *dest, char *source, int nbytes);
+        ///     Return: dest in DX:AX
         /// </summary>
         private void stzcpy()
         {
             var destinationPointer = GetParameterPointer(0);
-            var sourcePointer = GetParameterPointer(2);
             var limit = GetParameter(4);
 
-            //Reserve last byte for NUL
+            strncpy();
+
             if (limit > 0)
-            {
-                --limit;
-            }
-
-            using var inputBuffer = new MemoryStream(limit);
-            var potentialString = Module.Memory.GetArray(sourcePointer, limit);
-            for (var i = 0; i < limit; i++)
-            {
-                if (potentialString[i] == 0x0)
-                    break;
-
-                inputBuffer.WriteByte(potentialString[i]);
-            }
-
-            //If the value read is less than the limit, it'll be padded with null characters
-            //per the MajorBBS Development Guide
-            for (var i = inputBuffer.Length; i < limit; i++)
-                inputBuffer.WriteByte(0x0);
-
-            //Set last byte to NUL
-            inputBuffer.WriteByte(0x0);
-
-            Module.Memory.SetArray(destinationPointer, inputBuffer.ToArray());
-
-#if DEBUG
-            _logger.Debug(
-                $"({Module.ModuleIdentifier}) Copied \"{Encoding.ASCII.GetString(inputBuffer.ToArray())}\" ({inputBuffer.Length} bytes) from {sourcePointer} to {destinationPointer}");
-#endif
-            Registers.SetPointer(destinationPointer);
+                Module.Memory.SetByte(destinationPointer + limit - 1, 0);
         }
 
         /// <summary>
@@ -1562,11 +1550,8 @@ namespace MBBSEmu.HostProcess.ExportedModules
         {
             var mcvFileName = GetParameterString(0, true);
 
-            //If the MCV file doesn't exist, but the MSG does -- we need to build the MCV
-            if (!File.Exists(Path.Combine(Module.ModulePath, mcvFileName)) &&
-                File.Exists(
-                    Path.Combine(Module.ModulePath, mcvFileName.Replace("mcv", "msg", StringComparison.InvariantCultureIgnoreCase))
-            ))
+            //If it's our first time opening it, generate the MCV
+            if (!McvPointerDictionary.Any(x=> x.Value.FileName == mcvFileName))
             {
                 // triggers MSG -> MCV compilation
                 _ = new MsgFile(Module.ModulePath,
@@ -1667,7 +1652,8 @@ namespace MBBSEmu.HostProcess.ExportedModules
         }
 
         /// <summary>
-        ///     Gets a string from an MCV file
+        ///     Gets a string from an MCV file, returned as freshly allocated from malloc.
+        ///     Return value should be free'd by the module.
         ///
         ///     Signature: char *string=stgopt(int msgnum)
         ///     Return: AX = Offset in Segment
@@ -1677,22 +1663,17 @@ namespace MBBSEmu.HostProcess.ExportedModules
         {
             var msgnum = GetParameter(0);
 
-            if (!Module.Memory.TryGetVariablePointer($"STGOPT_{_currentMcvFile.Offset}_{msgnum}",
-                out var variablePointer))
-            {
-                var outputValue = McvPointerDictionary[_currentMcvFile.Offset].GetString(msgnum);
+            var outputValue = McvPointerDictionary[_currentMcvFile.Offset].GetString(msgnum);
 
-                variablePointer = base.Module.Memory.AllocateVariable($"STGOPT_{_currentMcvFile.Offset}_{msgnum}",
-                    (ushort)outputValue.Length);
+            var variablePointer = Module.Memory.Malloc((ushort)outputValue.Length);
 
-                //Set Value in Memory
-                Module.Memory.SetArray(variablePointer, outputValue);
+            //Set Value in Memory
+            Module.Memory.SetArray(variablePointer, outputValue);
 
 #if DEBUG
-                _logger.Debug(
-                    $"({Module.ModuleIdentifier}) Retrieved option {msgnum} string value: {outputValue.Length} bytes saved to {variablePointer}");
+            _logger.Debug(
+                $"({Module.ModuleIdentifier}) Retrieved option {msgnum} string value: {outputValue.Length} bytes saved to {variablePointer}");
 #endif
-            }
 
             Registers.SetPointer(variablePointer);
         }
@@ -2541,7 +2522,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// </summary>
         private void insbtv()
         {
-            if (!insertBtv())
+            if (!insertBtv(LogLevel.Fatal))
                 throw new SystemException("Failed to insert database record");
         }
 
@@ -2553,17 +2534,17 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// <returns></returns>
         private void dinsbtv()
         {
-            Registers.AX = insertBtv() ? (ushort)1 : (ushort)0;
+            Registers.AX = insertBtv(LogLevel.Debug) ? (ushort)1 : (ushort)0;
         }
 
-        private bool insertBtv()
+        private bool insertBtv(LogLevel logLevel)
         {
             var btrieveRecordPointer = GetParameterPointer(0);
 
             var currentBtrieveFile = BtrieveGetProcessor(Module.Memory.GetPointer("BB"));
             var dataToWrite = Module.Memory.GetArray(btrieveRecordPointer, (ushort)currentBtrieveFile.RecordLength);
 
-            return currentBtrieveFile.Insert(dataToWrite.ToArray()) != 0;
+            return currentBtrieveFile.Insert(dataToWrite.ToArray(), logLevel) != 0;
         }
 
 
@@ -2579,7 +2560,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             var currentBtrieveFile = BtrieveGetProcessor(Module.Memory.GetPointer("BB"));
             var record = Module.Memory.GetArray(btrieveRecordPointer, recordLength);
 
-            currentBtrieveFile.Insert(record.ToArray());
+            currentBtrieveFile.Insert(record.ToArray(), LogLevel.Error);
         }
 
         /// <summary>
@@ -2830,17 +2811,25 @@ namespace MBBSEmu.HostProcess.ExportedModules
             }
         }
 
+        /// <summary>
+        ///     Registers a new Text Variable that will be used by the module
+        /// </summary>
         private void register_textvar()
         {
-            var textPointer = GetParameterPointer(0);
+            var name = GetParameterString(0, true);
             var functionPointer = GetParameterPointer(2);
 
-            var textBytes = Module.Memory.GetString(textPointer, true);
+            var newTextVar = new TextvarStruct(name, functionPointer);
+            var newTextVarOffset = Module.Memory.GetWord("NTVARS") * TextvarStruct.Size;
 
-            Module.TextVariables.Add(Encoding.ASCII.GetString(textBytes), functionPointer);
+            //Save
+            Module.Memory.SetArray(Module.Memory.GetVariablePointer("TXTVARS") + newTextVarOffset, newTextVar.Data);
+
+            //Increment
+            Module.Memory.SetWord("NTVARS", (ushort) (Module.Memory.GetWord("NTVARS") + 1));
 
 #if DEBUG
-            _logger.Debug($"({Module.ModuleIdentifier}) Registered Textvar \"{Encoding.ASCII.GetString(textBytes)}\" to {functionPointer}");
+            _logger.Debug($"({Module.ModuleIdentifier}) Registered Textvar \"{name}\" to {functionPointer} ({Module.Memory.GetVariablePointer("TXTVARS") + newTextVarOffset})");
 #endif
         }
 
@@ -3077,22 +3066,6 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// </summary>
         private ReadOnlySpan<byte> prfptr => Module.Memory.GetVariablePointer("PRFPTR").Data;
 
-        private bool FileAlreadyOpen(string fullPath, out FarPtr fileStructPointer)
-        {
-            // let's see if this file has already been opened, and if so return the current handle
-            if (Module.Memory.TryGetVariablePointer($"FILE_{fullPath}", out fileStructPointer))
-            {
-                var fileStruct = new FileStruct(Module.Memory.GetArray(fileStructPointer, FileStruct.Size));
-                if (FilePointerDictionary.TryGetValue(fileStruct.curp.Offset, out var fileStream))
-                {
-                    return true;
-                }
-            }
-
-            fileStructPointer = null;
-            return false;
-        }
-
         /// <summary>
         ///     Opens a new file for reading/writing
         ///
@@ -3106,13 +3079,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             var fileName = _fileFinder.FindFile(Module.ModulePath, filenameInputValue);
             var fullPath = Path.Combine(Module.ModulePath, fileName);
 
-            if (FileAlreadyOpen(fullPath, out var fileStructPointer))
-            {
-                _logger.Warn($"({Module.ModuleIdentifier}) Reopened File: {fullPath} - most likely a module bug.");
-
-                Registers.SetPointer(fileStructPointer);
-                return;
-            }
+            FarPtr fileStructPointer = null;
 
 #if DEBUG
             _logger.Debug($"({Module.ModuleIdentifier}) Opening File: {fullPath}");
@@ -3150,14 +3117,14 @@ namespace MBBSEmu.HostProcess.ExportedModules
             }
 
             //Allocate Memory for FILE struct
-            fileStructPointer ??= Module.Memory.GetOrAllocateVariablePointer($"FILE_{fullPath}", FileStruct.Size);
+            fileStructPointer ??= Module.Memory.GetOrAllocateVariablePointer($"FILE_{fullPath}-{FilePointerDictionary.Count}", FileStruct.Size);
 
             //Write New Blank Pointer
             var fileStruct = new FileStruct();
             Module.Memory.SetArray(fileStructPointer, fileStruct.Data);
 
             //Setup the File Stream
-            fileStream ??= File.Open(fullPath, FileMode.OpenOrCreate);
+            fileStream ??= File.Open(fullPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
 
             if (fileAccessMode.HasFlag(FileStruct.EnumFileAccessFlags.Append))
                 fileStream.Seek(fileStream.Length, SeekOrigin.Begin);
@@ -3633,7 +3600,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             scanf(inputString.GetEnumerator(), formatString, 4);
         }
 
-        private static IEnumerator<char> fromFileStream(FileStream input)
+        private static IEnumerator<char> FromFileStream(FileStream input)
         {
             int b;
             while ((b = input.ReadByte()) >= 0)
@@ -3659,7 +3626,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
                 return;
             }
 
-            scanf(fromFileStream(fileStream), formatString, 4);
+            scanf(FromFileStream(fileStream), formatString, 4);
         }
 
         private enum FormatParseState
@@ -3770,7 +3737,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             //Load registers and pass to Int21h
             var registers = new CpuRegisters();
             registers.FromRegs(Module.Memory.GetArray(parameterOffset1, 16));
-            new Int21h(registers, Module.Memory, _clock, _logger, Module.ModulePath).Handle();
+            new Int21h(registers, Module.Memory, _clock, _logger, _fileFinder, Console.In, Console.Out, Console.Error, Module.ModulePath).Handle();
 
             Module.Memory.SetArray(parameterOffset2, registers.ToRegs());
         }
@@ -3854,7 +3821,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             var fileStruct = new FileStruct(Module.Memory.GetArray(fileStructPointer, FileStruct.Size));
 
             if (!FilePointerDictionary.TryGetValue(fileStruct.curp.Offset, out var fileStream))
-                throw new Exception($"Unable to locate FileStream for {fileStructPointer} (Stream: {fileStruct.curp})");
+                throw new FileNotFoundException($"Unable to locate FileStream for {fileStructPointer} (Stream: {fileStruct.curp})");
 
             if (fileStream.Position == fileStream.Length)
             {
@@ -3868,6 +3835,9 @@ namespace MBBSEmu.HostProcess.ExportedModules
             for (var i = 0; i < (maxCharactersToRead - 1); i++)
             {
                 var inputValue = (byte)fileStream.ReadByte();
+
+                if (inputValue == '\r' && (fileStruct.flags & (ushort)FileStruct.EnumFileFlags.Binary) == 0)
+                    continue;
 
                 valueFromFile.WriteByte(inputValue);
 
@@ -3924,7 +3894,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             var fileStruct = new FileStruct(Module.Memory.GetArray(fileStructPointer, FileStruct.Size));
 
             if (!FilePointerDictionary.TryGetValue(fileStruct.curp.Offset, out var fileStream))
-                throw new Exception($"Unable to locate FileStream for {fileStructPointer} (Stream: {fileStruct.curp})");
+                throw new FileNotFoundException($"Unable to locate FileStream for {fileStructPointer} (Stream: {fileStruct.curp})");
 
             var output = Module.Memory.GetString(sourcePointer, true);
 
@@ -3955,13 +3925,13 @@ namespace MBBSEmu.HostProcess.ExportedModules
         private void fseek()
         {
             var fileStructPointer = GetParameterPointer(0);
-            var offset = GetParameterULong(2);
+            var offset = GetParameterLong(2);
             var origin = GetParameter(4);
 
             var fileStruct = new FileStruct(Module.Memory.GetArray(fileStructPointer, FileStruct.Size));
 
             if (!FilePointerDictionary.TryGetValue(fileStruct.curp.Offset, out var fileStream))
-                throw new Exception($"Unable to locate FileStream for {fileStructPointer} (Stream: {fileStruct.curp})");
+                throw new FileNotFoundException($"Unable to locate FileStream for {fileStructPointer} (Stream: {fileStruct.curp})");
 
             switch (origin)
             {
@@ -4976,7 +4946,11 @@ namespace MBBSEmu.HostProcess.ExportedModules
                 throw new FileNotFoundException(
                     $"File Pointer {fileStructPointer} (Stream: {fileStruct.curp}) not found in the File Pointer Dictionary");
 
-            fileStream.Write(stringToWrite);
+            if ((fileStruct.flags & (ushort)FileStruct.EnumFileFlags.Binary) == 0)
+                fileStream.Write(FormatNewLineCarriageReturn(stringToWrite));
+            else
+                fileStream.Write(stringToWrite);
+
             fileStream.Flush();
 
             //Update EOF Flag if required
@@ -5055,6 +5029,9 @@ namespace MBBSEmu.HostProcess.ExportedModules
 
             var characterRead = fileStream.ReadByte();
 
+            if (characterRead == '\r' && (fileStruct.flags & (ushort)FileStruct.EnumFileFlags.Binary) == 0)
+                characterRead = '\n';
+
             //Update EOF Flag if required
             if (fileStream.Position == fileStream.Length)
             {
@@ -5089,8 +5066,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// </summary>
         private void farfree()
         {
-            // no op, we don't support freeing yet
-            _logger.Debug($"({Module.ModuleIdentifier}) Farfreeing {GetParameterPointer(0)}");
+            Module.Memory.Free(GetParameterPointer(0));
         }
 
         /// <summary>
@@ -5104,10 +5080,9 @@ namespace MBBSEmu.HostProcess.ExportedModules
         {
             var requestedSize = GetParameterULong(0);
             if (requestedSize > 0xFFFF)
-                _logger.Warn($"({Module.ModuleIdentifier}) Trying to allocate {requestedSize} bytes");
+                throw new OutOfMemoryException("farmalloc trying to allocate more than a segment");
 
-            // argument is ULONG size, but who cares, just return a full segment
-            Registers.SetPointer(Module.Memory.AllocateRealModeSegment());
+            Registers.SetPointer(Module.Memory.Malloc((ushort)requestedSize));
         }
 
         /// <summary>
@@ -5121,7 +5096,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         {
             var size = GetParameter(0);
 
-            var allocatedMemory = Module.Memory.AllocateVariable(null, size);
+            var allocatedMemory = Module.Memory.Malloc(size);
 
 #if DEBUG
             _logger.Debug($"({Module.ModuleIdentifier}) Allocated {size} bytes starting at {allocatedMemory}");
@@ -5136,7 +5111,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         ///
         ///     Signature: int ungetc(int character,FILE *stream )
         /// </summary>
-        private void fungetc()
+        private void ungetc()
         {
             var character = GetParameter(0);
             var fileStructPointer = GetParameterPointer(1);
@@ -5151,7 +5126,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             fileStream.WriteByte((byte)character);
             fileStream.Position -= 1;
 
-            //Update EOF Flag if required
+            //Update EOF Flag if required -- TODO DO WE NEED?
             if (fileStream.Position == fileStream.Length)
             {
                 fileStruct.flags |= (ushort)FileStruct.EnumFileFlags.EOF;
@@ -5172,10 +5147,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// </summary>
         private void galfree()
         {
-            //Until we can refactor the memory controller, just return
-
-            //TODO: Memory is going to be leaked, need to fix this
-            return;
+            Module.Memory.Free(GetParameterPointer(0));
         }
 
 
@@ -5335,8 +5307,8 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// </summary>
         private void frzseg()
         {
-            if (!Module.Memory.HasSegment(0xF000))
-                Module.Memory.AddSegment(0xF000);
+            if (!Module.ProtectedMemory.HasSegment(0xF000))
+                Module.ProtectedMemory.AddSegment(0xF000);
 
             Registers.AX = 0x0;
             Registers.DX = 0xF000;
@@ -5552,11 +5524,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             var inputString = Encoding.ASCII.GetString(Module.Memory.GetArray(nxtcmdPointer, (ushort)remainingCharactersInCommand));
 
             IEnumerator<char> charEnumerator = inputString.GetEnumerator();
-            if (!charEnumerator.MoveNext())
-            {
-                cncint_ErrorResult(returnType);
-                return;
-            }
+            charEnumerator.MoveNext();
 
             var (moreInput, skipped) = ConsumeWhitespace(charEnumerator);
             if (!moreInput)
@@ -5705,18 +5673,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             var sourcePointer = GetParameterPointer(2);
             var bytesToMove = GetParameter(4);
 
-            //Verify the Destination will not overlap with the Source
-            if (sourcePointer.Segment == destinationPointer.Segment)
-            {
-                if (destinationPointer.Offset < sourcePointer.Offset &&
-                    destinationPointer.Offset + bytesToMove >= sourcePointer.Offset)
-                {
-                    throw new Exception(
-                        $"Destination {destinationPointer} would overlap with source {sourcePointer} ({bytesToMove} bytes)");
-                }
-            }
-
-            //Cast to array as the write can overlap and overwrite, mucking up the span read
+            // Cast to array as the write can overlap and overwrite, mucking up the span read
             var sourceData = Module.Memory.GetArray(sourcePointer, bytesToMove);
 
             Module.Memory.SetArray(destinationPointer, sourceData);
@@ -6071,7 +6028,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
         {
             var pathPointer = GetParameterPointer(0);
 
-            var pathString = _fileFinder.FindFile(Module.ModulePath, GetParameterFilename(0));
+            var pathString = _fileFinder.ResolvePathWithWildcards(Module.ModulePath, GetParameterFilename(0));
 
             var files = Directory.GetFiles(Module.ModulePath, pathString);
             uint totalBytes = 0;
@@ -6266,7 +6223,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             var recordPointer = GetParameterPointer(0);
             var btrieveOperation = (EnumBtrieveOperationCodes)GetParameter(2);
 
-            Registers.AX = anpbtv(recordPointer, caseSensitive: true, btrieveOperation) ? 1 : 0;
+            Registers.AX = (ushort) (anpbtv(recordPointer, caseSensitive: true, btrieveOperation) ? 1 : 0);
         }
 
         /// <summary>
@@ -6939,14 +6896,31 @@ namespace MBBSEmu.HostProcess.ExportedModules
         /// </summary>
         private void findtvar()
         {
-            var textVariableName = GetParameterString(0, true);
+            var name = GetParameterString(0, true);
 
-            for (var i = 0; i < Module.TextVariables.Count; i++)
+            //It's a system variable, set the pointer in the TXTVARS array to the 1st record,
+            //which will trigger an MBBSEmu only ordinal for variable lookup
+            if (_textVariableService.GetVariableIndex(name) > -1)
             {
-                if (Module.TextVariables.Keys.Select(x => x).ToList()[i] != textVariableName) continue;
-
-                Registers.AX = (ushort)i;
+                Registers.AX = 0;
                 return;
+            }
+
+            //Check variables registered within the module
+            var txtvarMemoryBase = Module.Memory.GetVariablePointer("TXTVARS");
+            for (ushort i = 0; i < MaxTextVariables; i++)
+            {
+                var currentTextVar =
+                    new TextvarStruct(Module.Memory.GetArray(txtvarMemoryBase + (i * TextvarStruct.Size),
+                        TextvarStruct.Size));
+
+                if (currentTextVar.name != name)
+                    continue;
+
+                findtvarValue = i;
+                Registers.AX = i;
+                return;
+
             }
 
             Registers.AX = 0xFFFF;
@@ -7279,12 +7253,6 @@ namespace MBBSEmu.HostProcess.ExportedModules
 
             var inputString = Module.Memory.GetArray(nxtcmdPointer, (ushort)remainingCharactersInCommand);
             var inputStringComponents = Encoding.ASCII.GetString(inputString).ToUpper().Split('\0');
-
-            if (inputStringComponents.Length == 0)
-            {
-                Registers.AX = 0;
-                return;
-            }
 
             switch (inputStringComponents[0])
             {
@@ -7728,10 +7696,10 @@ namespace MBBSEmu.HostProcess.ExportedModules
         private void alcdup()
         {
             var sourceStringPointer = GetParameterPointer(0);
-            var inputBuffer = Module.Memory.GetString(sourceStringPointer);
-            var destinationAllocatedPointer = Module.Memory.AllocateVariable(null, (ushort)inputBuffer.Length);
+            var inputBuffer = Module.Memory.GetString(sourceStringPointer, stripNull: false);
+            var destinationAllocatedPointer = Module.Memory.Malloc((ushort)inputBuffer.Length);
 
-            if (sourceStringPointer == FarPtr.Empty)
+            if (sourceStringPointer.IsNull())
             {
                 Module.Memory.SetByte(destinationAllocatedPointer, 0);
 #if DEBUG
@@ -7741,9 +7709,6 @@ namespace MBBSEmu.HostProcess.ExportedModules
             else
             {
                 Module.Memory.SetArray(destinationAllocatedPointer, inputBuffer);
-#if DEBUG
-                //_logger.Debug($"({Module.ModuleIdentifier}) Copied {inputBuffer.Length} bytes from {sourceStringPointer} to {destinationAllocatedPointer} -> {Encoding.ASCII.GetString(inputBuffer)}");
-#endif
             }
 
 #if DEBUG
@@ -7831,6 +7796,93 @@ namespace MBBSEmu.HostProcess.ExportedModules
             }
 
             Module.Memory.SetPointer("NXTCMD", new FarPtr(nxtcmdPointer.Segment, (ushort)(nxtcmdPointer.Offset)));
+        }
+
+        /// <summary>
+        ///     The number of Text Variables defined in the system
+        /// </summary>
+        private ReadOnlySpan<byte> ntvars => Module.Memory.GetVariablePointer("NTVARS").Data;
+
+        /// <summary>
+        ///     Base address for the array of TXTVARS Structs
+        /// </summary>
+        private ReadOnlySpan<byte> txtvars => Module.Memory.GetVariablePointer("*TXTVARS").Data;
+
+        /// <summary>
+        ///     Technically TXTVARS is a struct, which holds the system text variables and the offset of the *(varrour)() to be executed.
+        ///
+        ///     We set he pointer of the delegate to this routine, which will return the value of the variable looked up by a proceeding
+        ///     FINDTVAR() call
+        /// </summary>
+        private void txtvars_delegate()
+        {
+            var txtvarValue = _textVariableService.GetVariableByIndex(findtvarValue);
+
+            var txtvarsReturnPointer = Module.Memory.GetOrAllocateVariablePointer("TXTVARS_DELEGATE", 0xFF);
+
+            Module.Memory.SetArray(txtvarsReturnPointer, Encoding.ASCII.GetBytes(txtvarValue + '\0'));
+
+            Registers.SetPointer(txtvarsReturnPointer);
+        }
+
+        /// <summary>
+        ///     setmode - sets mode of open file
+        ///
+        ///     Signature: int setmode(int handle, int mode);
+        ///
+        /// FROM: fcntl.h:
+        /// * NOTE: Text is the default even if the given _O_TEXT bit is not on. */
+        /// #define _O_TEXT		0x4000	/* CR-LF in file becomes LF in memory. */
+        /// #define _O_BINARY	0x8000	/* Input and output is not translated. */
+        /// </summary>
+        private void setmode()
+        {
+            var fileHandle = GetParameter(0);
+            var fileMode = GetParameter(1);
+
+            if (!FilePointerDictionary.TryGetValue(fileHandle, out var fileStreamPointer))
+            {
+                // TODO sets errno to ???;
+                Registers.AX = 0xFFFF; // -1
+                return;
+            }
+
+            var fileStructPointer = Module.Memory.GetOrAllocateVariablePointer($"FILE_{fileStreamPointer.Name}-{FilePointerDictionary.Count}", FileStruct.Size);
+            var fileStruct = new FileStruct(Module.Memory.GetArray(fileStructPointer, FileStruct.Size));
+
+            switch (fileMode)
+            {
+                case 0x4000: //TEXT
+                    fileStruct.flags.ClearFlag((ushort)FileStruct.EnumFileFlags.Binary);
+                    Module.Memory.SetArray(fileStructPointer, fileStruct.Data);
+                    Registers.AX = 0x8000;
+                    break;
+                case 0x8000: //BINARY
+                    fileStruct.flags |= (ushort)FileStruct.EnumFileFlags.Binary;
+                    Module.Memory.SetArray(fileStructPointer, fileStruct.Data);
+                    Registers.AX = 0x4000;
+                    break;
+                default:
+                    throw new Exception($"Unknown setmode: {fileMode}");
+            }
+
+#if DEBUG
+            _logger.Debug($"({Module.ModuleIdentifier}) Setting mode {fileMode} for {fileStreamPointer.Name}");
+#endif
+        }
+
+        /// <summary>
+        ///     gettime - gets MS-DOS time
+        ///
+        ///     Signature: void gettime(struct time *timep);
+        /// </summary>
+        private void gettime()
+        {
+            var timePointer = GetParameterPointer(0);
+
+            var dosTimeStruct = new TimeStruct(_clock.Now);
+
+            Module.Memory.SetArray(timePointer, dosTimeStruct.Data);
         }
     }
 }

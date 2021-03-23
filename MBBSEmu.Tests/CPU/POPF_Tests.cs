@@ -9,8 +9,9 @@ namespace MBBSEmu.Tests.CPU
         public void POPF_Test()
         {
             Reset();
-            mbbsEmuMemoryCore.AddSegment(0);
+            mbbsEmuProtectedModeMemoryCore.AddSegment(0);
             mbbsEmuCpuRegisters.F = 0;
+            var originalSP = mbbsEmuCpuRegisters.SP;
             mbbsEmuCpuCore.Push(0xFFFF);
 
             var instructions = new Assembler(16);
@@ -21,6 +22,29 @@ namespace MBBSEmu.Tests.CPU
             mbbsEmuCpuCore.Tick();
 
             Assert.Equal(0xFFFF, mbbsEmuCpuRegisters.F);
+            Assert.Equal(originalSP, mbbsEmuCpuRegisters.SP);
+        }
+
+        [Fact]
+        public void POPFD_Test()
+        {
+            Reset();
+            mbbsEmuProtectedModeMemoryCore.AddSegment(0);
+            mbbsEmuCpuRegisters.EF = 0;
+            var originalSP = mbbsEmuCpuRegisters.SP;
+            mbbsEmuCpuCore.Push(0xFFFFFFFF);
+
+            var instructions = new Assembler(16);
+
+            instructions.popfd();
+            CreateCodeSegment(instructions);
+
+            mbbsEmuCpuCore.Tick();
+
+            // so the reason this is 0x0000FFFF instead of 0xFFFFFFFF is because EF isn't a full 32
+            // bit register, but rather we fake it to be by extending F to 32 bits.
+            Assert.Equal(0x0000FFFF, mbbsEmuCpuRegisters.F);
+            Assert.Equal(originalSP, mbbsEmuCpuRegisters.SP);
         }
     }
 }

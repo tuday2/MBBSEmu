@@ -1,5 +1,4 @@
-﻿using MBBSEmu.CPU;
-using MBBSEmu.Extensions;
+﻿using Iced.Intel;
 using Xunit;
 
 namespace MBBSEmu.Tests.CPU
@@ -12,13 +11,13 @@ namespace MBBSEmu.Tests.CPU
         public void JBE_DoesJump(bool carryFlagValue, bool zeroFlagValue)
         {
             Reset();
-            CreateCodeSegment(new byte[] { 0x76, 01 });
 
-            if(carryFlagValue)
-                mbbsEmuCpuRegisters.F = mbbsEmuCpuRegisters.F.SetFlag((ushort)EnumFlags.CF);
+            var instructions = new Assembler(16);
+            instructions.jbe(3);
+            CreateCodeSegment(instructions);
 
-            if(zeroFlagValue)
-                mbbsEmuCpuRegisters.F = mbbsEmuCpuRegisters.F.SetFlag((ushort)EnumFlags.ZF);
+            mbbsEmuCpuRegisters.CarryFlag = carryFlagValue;
+            mbbsEmuCpuRegisters.ZeroFlag = zeroFlagValue;
 
             //Process Instruction
             mbbsEmuCpuCore.Tick();

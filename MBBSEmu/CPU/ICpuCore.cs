@@ -1,13 +1,14 @@
 ﻿using System.Collections.Generic;
 using MBBSEmu.DOS.Interrupts;
 using MBBSEmu.Memory;
+using System;
 
 namespace MBBSEmu.CPU
 {
     /// <summary>
     ///     Interface for CpuCore
     /// </summary>
-    public interface ICpuCore : ICpuRegisters
+    public interface ICpuCore : ICpuRegisters, IDisposable
     {
         /// <summary>
         ///     Resets the CPU back to a starting state
@@ -15,7 +16,8 @@ namespace MBBSEmu.CPU
         /// <param name="memoryCore"></param>
         /// <param name="invokeExternalFunctionDelegate"></param>
         /// <param name="interruptHandlers"></param>
-        void Reset(IMemoryCore memoryCore, CpuCore.InvokeExternalFunctionDelegate invokeExternalFunctionDelegate, IEnumerable<IInterruptHandler> interruptHandlers);
+        /// <param name="ioPortHandlers"></param>
+        void Reset(IMemoryCore memoryCore, CpuCore.InvokeExternalFunctionDelegate invokeExternalFunctionDelegate, IEnumerable<IInterruptHandler> interruptHandlers, IDictionary<int, IIOPort> ioPortHandlers);
 
         /// <summary>
         ///     Resets the CPU to a startup state
@@ -38,5 +40,7 @@ namespace MBBSEmu.CPU
         /// </summary>
         /// <param name="value"></param>
         void Push(ushort value);
+
+        void Interrupt(byte vectorNumber);
     }
 }

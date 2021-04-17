@@ -105,7 +105,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             _previousBtrieveFile = new Stack<FarPtr>(10);
             _highResolutionTimer.Start();
 
-            _int21h = new Int21h(Registers, Module.Memory, _clock, _logger, _fileFinder, Console.In, Console.Out, Console.Error, Module.ModulePath);
+            _int21h = new Int21h(Registers, Module.Memory, _clock, _logger, _fileFinder, null, null, new TextWriterStream(Console.Error), Module.ModulePath);
 
             //Add extra channel for "system full" message
             var _numberOfChannels = _configuration.BBSChannels + 1;
@@ -2450,6 +2450,8 @@ namespace MBBSEmu.HostProcess.ExportedModules
                 Module.Memory.SetArray(destinationRecordBuffer, record.Data);
             }
 
+            // TODO SET LOGICAL POSITION FOR NEXT/PREVIOUS
+
             if (keyNumber >= 0 && currentBtrieveFile.Keys.Count > 0)
                 Module.Memory.SetArray(btvStruct.key, currentBtrieveFile.Keys[(ushort)keyNumber].ExtractKeyDataFromRecord(record.Data));
 
@@ -3315,6 +3317,10 @@ namespace MBBSEmu.HostProcess.ExportedModules
 
             if (fileStream.Position >= fileStream.Length)
             {
+                //Set EOF Flag
+                fileStruct.flags |= (ushort)FileStruct.EnumFileFlags.EOF;
+                Module.Memory.SetArray(fileStructPointer, fileStruct.Data);
+
                 Registers.AX = 0;
                 return;
             }
@@ -3982,7 +3988,7 @@ namespace MBBSEmu.HostProcess.ExportedModules
             var unpackedTime = new DateTime(_clock.Now.Year, _clock.Now.Month, _clock.Now.Day, unpackedHour,
                 unpackedMinutes, unpackedSeconds);
 
-            var timeString = unpackedTime.ToString("HH:mm:ss");
+            var timeString = $"{unpackedTime.ToString("HH:mm:ss")}\0";
             var variablePointer = Module.Memory.GetOrAllocateVariablePointer("NCTIME", (ushort) timeString.Length);
 
             Module.Memory.SetArray(variablePointer.Segment, variablePointer.Offset,

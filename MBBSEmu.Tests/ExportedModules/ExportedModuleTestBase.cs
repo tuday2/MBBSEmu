@@ -20,7 +20,7 @@ using System.Text;
 
 namespace MBBSEmu.Tests.ExportedModules
 {
-    public abstract class ExportedModuleTestBase : TestBase
+    public abstract class ExportedModuleTestBase : TestBase, IDisposable
     {
         // list of ordinals that use the __stdcall convention, which means the callee cleans up the
         // stack.
@@ -55,7 +55,7 @@ namespace MBBSEmu.Tests.ExportedModules
             var textVariableService = _serviceResolver.GetService<ITextVariableService>();
 
             mbbsEmuMemoryCore = mbbsEmuProtectedModeMemoryCore = new ProtectedModeMemoryCore(_serviceResolver.GetService<ILogger>());
-            mbbsEmuCpuCore = new CpuCore();
+            mbbsEmuCpuCore = new CpuCore(_serviceResolver.GetService<ILogger>());
             mbbsEmuCpuRegisters = mbbsEmuCpuCore;
 
             var testModuleConfig = new ModuleConfiguration {ModulePath = modulePath, ModuleEnabled = true};
@@ -87,8 +87,15 @@ namespace MBBSEmu.Tests.ExportedModules
                 testSessions,
                 textVariableService);
 
-            mbbsEmuCpuCore.Reset(mbbsEmuMemoryCore, ExportedFunctionDelegate, null);
+            mbbsEmuCpuCore.Reset(mbbsEmuMemoryCore, ExportedFunctionDelegate, null, null);
         }
+
+        public virtual void Dispose()
+        {
+            mbbsEmuCpuCore.Dispose();
+            mbbsModule.Dispose();
+        }
+
         private ReadOnlySpan<byte> ExportedFunctionDelegate(ushort ordinal, ushort functionOrdinal)
         {
             switch (ordinal)

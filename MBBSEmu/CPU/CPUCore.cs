@@ -1,4 +1,5 @@
 ﻿using Iced.Intel;
+using MBBSEmu.Date;
 using MBBSEmu.DOS.Interrupts;
 using MBBSEmu.Extensions;
 using MBBSEmu.Logging;
@@ -6,7 +7,6 @@ using MBBSEmu.Memory;
 using NLog;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
 namespace MBBSEmu.CPU
@@ -14,7 +14,7 @@ namespace MBBSEmu.CPU
     /// <summary>
     ///     MBBSEmu emulated 16-bit x86 Core used to execute decompiled x86 Assembly
     /// </summary>
-    public class CpuCore : CpuRegisters, ICpuCore
+    public class CpuCore : CpuRegisters, ICpuCore, IDisposable
     {
         protected readonly ILogger _logger;
 
@@ -124,17 +124,27 @@ namespace MBBSEmu.CPU
         /// </summary>
         private const MethodImplOptions OpcodeSubroutineCompilerOptimizations = MethodImplOptions.AggressiveOptimization | MethodImplOptions.AggressiveInlining;
 
-        private readonly Dictionary<int, IInterruptHandler> _interruptHandlers;
+        private readonly Dictionary<int, IInterruptHandler> _interruptHandlers = new();
+        private readonly Dictionary<int, IIOPort> _ioPortHandlers = new();
 
-        public CpuCore(ILogger logger) : this()
+        public CpuCore(ILogger logger)
         {
             _logger = logger;
-            _interruptHandlers = new Dictionary<int, IInterruptHandler>();
         }
 
-        public CpuCore()
+        public void Dispose()
         {
+            foreach (var handler in _interruptHandlers.Values)
+            {
+                if (handler is IDisposable disposable)
+                    disposable.Dispose();
+            }
 
+            foreach (var handler in _ioPortHandlers.Values)
+            {
+                if (handler is IDisposable disposable)
+                    disposable.Dispose();
+            }
         }
 
         /// <summary>
@@ -143,8 +153,9 @@ namespace MBBSEmu.CPU
         /// <param name="memoryCore"></param>
         /// <param name="invokeExternalFunctionDelegate"></param>
         /// <param name="interruptHandlers"></param>
+        /// <param name="ioPortHandlers"></param>
         public void Reset(IMemoryCore memoryCore,
-            InvokeExternalFunctionDelegate invokeExternalFunctionDelegate, IEnumerable<IInterruptHandler> interruptHandlers)
+            InvokeExternalFunctionDelegate invokeExternalFunctionDelegate, IEnumerable<IInterruptHandler> interruptHandlers, IDictionary<int, IIOPort> ioPortHandlers)
         {
             //Setup Debug Pointers
             _currentInstructionPointer = FarPtr.Empty;
@@ -155,8 +166,18 @@ namespace MBBSEmu.CPU
             _invokeExternalFunctionDelegate = invokeExternalFunctionDelegate;
 
             if (interruptHandlers != null)
+            {
+                _interruptHandlers.Clear();
                 foreach (var h in interruptHandlers)
                     _interruptHandlers.Add(h.Vector, h);
+            }
+
+            if (ioPortHandlers != null)
+            {
+                _ioPortHandlers.Clear();
+                foreach (var h in ioPortHandlers)
+                    _ioPortHandlers.Add(h.Key, h.Value);
+            }
 
             //Setup Memory Space
             Memory = memoryCore;
@@ -255,6 +276,12 @@ namespace MBBSEmu.CPU
 
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public void Interrupt(byte vectorNumber)
+        {
+            // TODO schedule the CPU interrupt
+        }
+
         /// <summary>
         ///     Pushes a DWord to the Stack and decrements the Stack Pointer
         /// </summary>
@@ -277,16 +304,6 @@ namespace MBBSEmu.CPU
         [MethodImpl(OpcodeCompilerOptimizations)]
         public void Tick()
         {
-            // TODO figure out how we can remove this check, such as filling the
-            // memory core instruction set at 65535 to all halt instructions
-
-            // Check for segment end
-            if (Registers.CS == ushort.MaxValue)
-            {
-                Registers.Halt = true;
-                return;
-            }
-
 #if DEBUG
             _currentInstructionPointer.Offset = Registers.IP;
             _currentInstructionPointer.Segment = Registers.CS;
@@ -344,6 +361,12 @@ namespace MBBSEmu.CPU
                 case Mnemonic.Jg:
                     Op_Jg();
                     return;
+                case Mnemonic.Js:
+                    Op_Js();
+                    return;
+                case Mnemonic.Jns:
+                    Op_Jns();
+                    return;
                 case Mnemonic.Jge:
                     Op_Jge();
                     return;
@@ -381,8 +404,12 @@ namespace MBBSEmu.CPU
                 //Instructions that do not set IP -- we'll just increment
                 case Mnemonic.Wait:
                 case Mnemonic.Nop:
+                    break;
                 case Mnemonic.In:
+                    Op_In();
+                    break;
                 case Mnemonic.Out:
+                    Op_Out();
                     break;
                 case Mnemonic.Hlt: //Halt CPU until interrupt, there are none so keep going
                     Registers.Halt = true;
@@ -526,6 +553,9 @@ namespace MBBSEmu.CPU
                 case Mnemonic.Fsub:
                     Op_Fsub();
                     break;
+                case Mnemonic.Fldpi:
+                    Op_Fldpi();
+                    break;
                 case Mnemonic.Fldz:
                     Op_Fldz();
                     break;
@@ -557,6 +587,9 @@ namespace MBBSEmu.CPU
                 case Mnemonic.Cld:
                     Op_Cld();
                     break;
+                case Mnemonic.Std:
+                    Op_Std();
+                    break;
                 case Mnemonic.Lodsb:
                     Op_Lodsb();
                     break;
@@ -569,8 +602,17 @@ namespace MBBSEmu.CPU
                 case Mnemonic.Fld1:
                     Op_Fld1();
                     break;
+                case Mnemonic.Fxch:
+                    Op_Fxch();
+                    break;
+                case Mnemonic.Fpatan:
+                    Op_Fpatan();
+                    break;
                 case Mnemonic.Fsqrt:
                     Op_Fsqrt();
+                    break;
+                case Mnemonic.Fscale:
+                    Op_Fscale();
                     break;
                 case Mnemonic.Fdiv:
                     Op_Fdiv();
@@ -720,7 +762,14 @@ namespace MBBSEmu.CPU
                                 throw new Exception($"Invalid Operand Size: {_currentInstruction.MemorySize}");
                         }
                     }
-
+                case OpKind.MemorySegSI:
+                    {
+                        return Memory.GetByte(Registers.GetValue(_currentInstruction.MemorySegment), Registers.SI);
+                    }
+                case OpKind.MemorySegDI:
+                    {
+                        return Memory.GetByte(Registers.GetValue(_currentInstruction.MemorySegment), Registers.DI);
+                    }
                 default:
                     throw new Exception($"Unsupported OpKind: {opKind}");
             }
@@ -771,7 +820,14 @@ namespace MBBSEmu.CPU
                                 throw new Exception($"Invalid Operand Size: {_currentInstruction.MemorySize}");
                         }
                     }
-
+                case OpKind.MemorySegSI:
+                    {
+                        return Memory.GetWord(Registers.GetValue(_currentInstruction.MemorySegment), Registers.SI);
+                    }
+                case OpKind.MemorySegDI:
+                    {
+                        return Memory.GetWord(Registers.GetValue(_currentInstruction.MemorySegment), Registers.DI);
+                    }
                 default:
                     throw new Exception($"Unsupported OpKind: {opKind}");
             }
@@ -828,7 +884,14 @@ namespace MBBSEmu.CPU
                                 throw new Exception($"Invalid Operand Size: {_currentInstruction.MemorySize}");
                         }
                     }
-
+                case OpKind.MemorySegSI:
+                    {
+                        return Memory.GetDWord(Registers.GetValue(_currentInstruction.MemorySegment), Registers.SI);
+                    }
+                case OpKind.MemorySegDI:
+                    {
+                        return Memory.GetDWord(Registers.GetValue(_currentInstruction.MemorySegment), Registers.DI);
+                    }
                 default:
                     throw new Exception($"Unsupported OpKind: {opKind}");
             }
@@ -959,12 +1022,12 @@ namespace MBBSEmu.CPU
                         {
                             case Register.DS when _currentInstruction.MemoryIndex == Register.None:
                             case Register.None when _currentInstruction.MemoryIndex == Register.None:
-                                result = (ushort)_currentInstruction.MemoryDisplacement;
+                                result = (ushort)_currentInstruction.MemoryDisplacement32;
                                 break;
                             case Register.BP when _currentInstruction.MemoryIndex == Register.None:
                                 {
 
-                                    result = (ushort)(Registers.BP + _currentInstruction.MemoryDisplacement);
+                                    result = (ushort)(Registers.BP + _currentInstruction.MemoryDisplacement32);
                                     break;
                                 }
 
@@ -972,31 +1035,31 @@ namespace MBBSEmu.CPU
                                 {
 
                                     result = (ushort)(Registers.BP + Registers.SI +
-                                                       _currentInstruction.MemoryDisplacement);
+                                                       _currentInstruction.MemoryDisplacement32);
                                     break;
                                 }
 
                             case Register.BP when _currentInstruction.MemoryIndex == Register.DI:
                                 {
                                     result = (ushort)(Registers.BP + Registers.DI +
-                                                       _currentInstruction.MemoryDisplacement);
+                                                       _currentInstruction.MemoryDisplacement32);
                                     break;
                                 }
 
                             case Register.BX when _currentInstruction.MemoryIndex == Register.None:
-                                result = (ushort)(Registers.BX + _currentInstruction.MemoryDisplacement);
+                                result = (ushort)(Registers.BX + _currentInstruction.MemoryDisplacement32);
                                 break;
                             case Register.BX when _currentInstruction.MemoryIndex == Register.SI:
-                                result = (ushort)(Registers.BX + _currentInstruction.MemoryDisplacement + Registers.SI);
+                                result = (ushort)(Registers.BX + _currentInstruction.MemoryDisplacement32 + Registers.SI);
                                 break;
                             case Register.BX when _currentInstruction.MemoryIndex == Register.DI:
-                                result = (ushort)(Registers.BX + _currentInstruction.MemoryDisplacement + Registers.DI);
+                                result = (ushort)(Registers.BX + _currentInstruction.MemoryDisplacement32 + Registers.DI);
                                 break;
                             case Register.SI when _currentInstruction.MemoryIndex == Register.None:
-                                result = (ushort)(Registers.SI + _currentInstruction.MemoryDisplacement);
+                                result = (ushort)(Registers.SI + _currentInstruction.MemoryDisplacement32);
                                 break;
                             case Register.DI when _currentInstruction.MemoryIndex == Register.None:
-                                result = (ushort)(Registers.DI + _currentInstruction.MemoryDisplacement);
+                                result = (ushort)(Registers.DI + _currentInstruction.MemoryDisplacement32);
                                 break;
                             default:
                                 throw new Exception($"Unknown GetOperandOffset MemoryBase: {_currentInstruction}");
@@ -1153,8 +1216,40 @@ namespace MBBSEmu.CPU
                         return;
                     }
                 default:
-                    throw new ArgumentOutOfRangeException($"Unknown Source: {_currentInstruction.Op0Kind}");
+                    throw new ArgumentOutOfRangeException($"Unknown Source: {_currentInstruction.Op1Kind}");
             }
+        }
+
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_In()
+        {
+            var port = GetOperandValueUInt8(_currentInstruction.Op1Kind, EnumOperandType.Source);
+
+            if (!_ioPortHandlers.TryGetValue(port, out var ioport))
+            {
+                _logger.Warn($"Attempted access of unimplemented IO Port: {port}");
+                return;
+            }
+
+            var data = ioport.In(port);
+
+            Registers.SetValue(_currentInstruction.Op0Register, data);
+        }
+
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Out()
+        {
+            var port = GetOperandValueUInt8(_currentInstruction.Op0Kind, EnumOperandType.Source);
+
+            if (!_ioPortHandlers.TryGetValue(port, out var ioport))
+            {
+                _logger.Warn($"Attempted access of unimplemented IO Port: {port}");
+                return;
+            }
+
+            var data = GetOperandValueUInt8(_currentInstruction.Op1Kind, EnumOperandType.Source);
+
+            ioport.Out(port, data);
         }
 
         [MethodImpl(OpcodeCompilerOptimizations)]
@@ -1775,6 +1870,12 @@ namespace MBBSEmu.CPU
         {
             Registers.IP = Pop();
             Registers.CS = Pop();
+
+            //Pop N bytes (N/2 words) that were Pushed before the CALL
+            if (_currentInstruction.Op0Kind == OpKind.Immediate16)
+                Registers.SP += GetOperandValueUInt16(OpKind.Immediate16, EnumOperandType.Destination);
+
+            Registers.Halt |= Registers.CS == 0xFFFF;
         }
 
         [MethodImpl(OpcodeCompilerOptimizations)]
@@ -1785,6 +1886,8 @@ namespace MBBSEmu.CPU
             //Pop N bytes (N/2 words) that were Pushed before the CALL
             if (_currentInstruction.Op0Kind == OpKind.Immediate16)
                 Registers.SP += GetOperandValueUInt16(OpKind.Immediate16, EnumOperandType.Destination);
+
+            Registers.Halt |= Registers.CS == 0xFFFF;
         }
 
         [MethodImpl(OpcodeCompilerOptimizations)]
@@ -2175,6 +2278,34 @@ namespace MBBSEmu.CPU
         {
             //CF == 1
             if (Registers.CarryFlag)
+            {
+                Registers.IP = _currentInstruction.Immediate16;
+            }
+            else
+            {
+                Registers.IP += (ushort)_currentInstruction.Length;
+            }
+        }
+
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Js()
+        {
+            //SF == 1
+            if (Registers.SignFlag)
+            {
+                Registers.IP = _currentInstruction.Immediate16;
+            }
+            else
+            {
+                Registers.IP += (ushort)_currentInstruction.Length;
+            }
+        }
+
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Jns()
+        {
+            //SF == 0
+            if (!Registers.SignFlag)
             {
                 Registers.IP = _currentInstruction.Immediate16;
             }
@@ -2706,7 +2837,7 @@ namespace MBBSEmu.CPU
 
 #if DEBUG
                         if(_showDebug)
-                            _logger.Info($"CALL {Registers.CS}:{Registers.IP}");
+                            _logger.Info($"CALL {Registers.CS:X4}:{Registers.IP:X4}");
 #endif
 
                         //Loaded an Exported Function Delegate from Memory
@@ -2742,7 +2873,7 @@ namespace MBBSEmu.CPU
 
 #if DEBUG
                         if (_showDebug)
-                            _logger.Info($"CALL {_currentInstruction.FarBranchSelector}:{_currentInstruction.Immediate16}");
+                            _logger.Info($"CALL {_currentInstruction.FarBranchSelector:X4}:{_currentInstruction.Immediate16:X4}");
 #endif
 
                         _invokeExternalFunctionDelegate(_currentInstruction.FarBranchSelector,
@@ -2770,7 +2901,7 @@ namespace MBBSEmu.CPU
 
 #if DEBUG
                         if (_showDebug)
-                            _logger.Info($"CALL {Registers.CS}:{Registers.IP}");
+                            _logger.Info($"CALL {Registers.CS:X4}:{Registers.IP:X4}");
 #endif
                         break;
                     }
@@ -2783,7 +2914,7 @@ namespace MBBSEmu.CPU
 
 #if DEBUG
                         if (_showDebug)
-                            _logger.Info($"CALL {Registers.CS}:{Registers.IP}");
+                            _logger.Info($"CALL {Registers.CS:X4}:{Registers.IP:X4}");
 #endif
                         break;
                     }
@@ -2800,7 +2931,7 @@ namespace MBBSEmu.CPU
 
 #if DEBUG
                             if (_showDebug)
-                                _logger.Info($"CALL {Registers.CS}:{Registers.IP}");
+                                _logger.Info($"CALL {Registers.CS:X4}:{Registers.IP:X4}");
 #endif
 
                         }
@@ -3056,6 +3187,16 @@ namespace MBBSEmu.CPU
         }
 
         /// <summary>
+        ///     Load π onto stack
+        /// </summary>
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Fldpi()
+        {
+            Registers.Fpu.PushStackTop();
+            FpuStack[Registers.Fpu.GetStackTop()] = Math.PI; //set ST(0) to π
+        }
+
+        /// <summary>
         ///     Floating Point Load Control Word
         /// </summary>
         [MethodImpl(OpcodeCompilerOptimizations)]
@@ -3221,12 +3362,18 @@ namespace MBBSEmu.CPU
         private void Op_Cld() => Registers.DirectionFlag = false;
 
         /// <summary>
+        ///     Sets Direction Flag
+        /// </summary>
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Std() => Registers.DirectionFlag = true;
+
+        /// <summary>
         ///     Load byte at address DS:(E)SI into AL.
         /// </summary>
         [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Lodsb()
         {
-            Registers.AL = Memory.GetByte(Registers.DS, Registers.SI);
+            Registers.AL = GetOperandValueUInt8(_currentInstruction.Op1Kind, EnumOperandType.Source);
 
             if (Registers.DirectionFlag)
             {
@@ -3371,6 +3518,85 @@ namespace MBBSEmu.CPU
         {
             Registers.Fpu.PushStackTop();
             FpuStack[Registers.Fpu.GetStackTop()] = 1d;
+        }
+
+        /// <summary>
+        ///     Floating Point Operation (x87)
+        ///
+        ///     Exchanges the contents of registers ST(0) and ST(i). If no source operand is specified, the contents of ST(0) and ST(1) are exchanged.
+        /// </summary>
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Fxch()
+        {
+            var STdestination = GetOperandValueDouble(_currentInstruction.Op0Kind, EnumOperandType.Destination);
+            var STsource = GetOperandValueDouble(_currentInstruction.Op1Kind, EnumOperandType.Source);
+
+            //Exchange values
+            FpuStack[Registers.Fpu.GetStackPointer(_currentInstruction.Op0Register)] = STsource;
+            FpuStack[Registers.Fpu.GetStackPointer(_currentInstruction.Op1Register)] = STdestination;
+        }
+
+        /// <summary>
+        ///     Floating Point Operation (x87)
+        ///
+        ///     Computes the arctangent of the source operand in register ST(1) divided by the source operand in register ST(0), stores the result in ST(1), and pops the FPU register stack.
+        ///     The FPATAN instruction returns the angle between the X axis and the line from the origin to the point (X,Y), where Y (the ordinate) is ST(1) and X (the abscissa) is ST(0).
+        /// </summary>
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Fpatan()
+        {
+            var ST0x = FpuStack[Registers.Fpu.GetStackTop()];
+            var ST1y = FpuStack[Registers.Fpu.GetStackPointer(Register.ST1)];
+            var result = (ST0x, ST1y)
+            switch
+            {
+                (double.NaN, double.NaN) => double.NaN,
+                var (x, y) when double.IsNaN(x) && y >= double.NegativeInfinity && y <= double.PositiveInfinity => double.NaN,
+                var (x, y) when double.IsNaN(x) && y >= -0 && y <= 0 => double.NaN,
+                var (x, y) when double.IsPositiveInfinity(x) && double.IsNaN(y) => double.NaN,
+                var (x, y) when double.IsNegativeInfinity(x) && double.IsNaN(y) => double.NaN,
+                _ => Math.Atan2(ST1y, ST0x)
+            };
+
+            //TODO C1 Set to 0 if stack underflow occurred. Set if result was rounded up; cleared otherwise. C0, C2, C3 Undefined.
+
+            //Store result at ST1
+            FpuStack[Registers.Fpu.GetStackPointer(Register.ST1)] = result;
+
+            //Pop the Stack making ST(1)->ST(0)
+            Registers.Fpu.PopStackTop();
+        }
+
+        /// <summary>
+        ///     Floating Point Operation (x87)
+        ///
+        ///     Interprets the value contained in ST(1) as an integer and adds this value to the exponent of the number in ST.
+        ///
+        ///     Truncates the value in the source operand (toward 0) to an integral value and adds that value to the exponent
+        ///     of the destination operand. The destination and source operands are floating-point values located in registers ST(0) and ST(1), respectively.
+        /// </summary>
+        [MethodImpl(OpcodeCompilerOptimizations)]
+        private void Op_Fscale()
+        {
+            var ST0 = FpuStack[Registers.Fpu.GetStackTop()];
+            var ST1 = FpuStack[Registers.Fpu.GetStackPointer(Register.ST1)];
+
+            var result = (ST0, ST1)
+                switch
+                {
+                    (double.NaN, double.NaN) => double.NaN,
+                    var (st0, _) when double.IsNaN(st0) => double.NaN,
+                    var (_, st1) when double.IsNaN(st1) => double.NaN,
+                    var (st0, st1) when double.IsNegativeInfinity(st0) && double.IsNegativeInfinity(st1) => double.NaN,
+                    var (st0, st1) when double.IsPositiveInfinity(st0) && double.IsNegativeInfinity(st1) => double.NaN,
+                    var (st0, st1) when st0 == 0 && double.IsPositiveInfinity(st1) => double.NaN,
+                    _ => Math.ScaleB(ST0, (int)ST1)
+                };
+
+            //TODO C1 Set to 0 if stack underflow occurred. Set if result was rounded up; cleared otherwise. C0, C2, C3 Undefined.
+
+            //Store result
+            FpuStack[Registers.Fpu.GetStackTop()] = result;
         }
 
         /// <summary>
@@ -3747,7 +3973,7 @@ namespace MBBSEmu.CPU
         [MethodImpl(OpcodeCompilerOptimizations)]
         private void Op_Lodsw()
         {
-            Registers.AX = Memory.GetWord(Registers.DS, Registers.SI);
+            Registers.AX = GetOperandValueUInt16(_currentInstruction.Op1Kind, EnumOperandType.Source);
 
             if (Registers.DirectionFlag)
             {

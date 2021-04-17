@@ -85,6 +85,8 @@ namespace MBBSEmu.Tests.CPU
             Assert.False(mbbsEmuCpuRegisters.SignFlag);
         }
 
+        /* FUTURE TEST when 32bit addressing is added
+         
         [Theory]
         [InlineData(1000, 456, 1456)]
         [InlineData(uint.MaxValue, 0, uint.MaxValue)]
@@ -109,5 +111,6 @@ namespace MBBSEmu.Tests.CPU
             Assert.False(mbbsEmuCpuRegisters.ZeroFlag);
             Assert.False(mbbsEmuCpuRegisters.SignFlag);
         }
+        */
     }
 }
